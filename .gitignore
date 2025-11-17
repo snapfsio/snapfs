@@ -1,0 +1,79 @@
+# -----------------
+# Python (server/)
+# -----------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.pdb
+*.egg-info/
+*.egg
+*.manifest
+*.spec
+*.log
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+
+# Coverage / test
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.tox/
+
+# -----------------
+# Node / JS (client/)
+# -----------------
+node_modules/
+dist/
+.cache/
+.npm/
+.npmrc
+.pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+vite.config.ts.timestamp*
+.vscode/
+
+# Build artifacts
+client/.vite/
+client/build/
+client/coverage/
+
+# -----------------
+# Docker
+# -----------------
+*.pid
+*.seed
+*.pid.lock
+docker-compose.override.yml
+.env
+.env.local
+.env.*.local
+
+# -----------------
+# Terraform (infra/)
+# -----------------
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# -----------------
+# OS / Editor
+# -----------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+tmp/

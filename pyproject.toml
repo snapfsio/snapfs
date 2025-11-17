@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snapfs"
+version = "0.1.0"
+description = "SnapFS Python client and CLI"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+
+authors = [
+  { name = "Ryan Galloway", email = "ryan@rsg.io" }
+]
+
+dependencies = [
+  "aiohttp>=3.8",
+  "click>=8.0",
+  "rich>=13.0",
+]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/snapfsio/snapfs"
+Source   = "https://github.com/snapfsio/snapfs"
+Issues   = "https://github.com/snapfsio/snapfs/issues"
+
+[project.scripts]
+snapfs = "snapfs.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = {"" = "lib"}
+
+[tool.setuptools.packages.find]
+where = ["lib"]
