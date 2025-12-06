@@ -20,11 +20,13 @@ import sys
 
 import click
 
+from snapfs import __prog__, __version__
 from snapfs import SnapFS, scanner
 from snapfs.config import DEFAULT_GATEWAY
 
 
 @click.group()
+@click.version_option(version=__version__, prog_name=__prog__)
 @click.option(
     "--gateway",
     "gateway_url",
@@ -99,8 +101,14 @@ def query(ctx, sql):
     is_flag=True,
     help="Force publishing events even when cache reports HIT (re-sends metadata).",
 )
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Increase verbosity (can be used multiple times).",
+)
 @click.pass_context
-def scan(ctx, path, force):
+def scan(ctx, path, force: bool = False, verbose: int = 0):
     """
     Scan a filesystem PATH and publish events to the SnapFS gateway.
 
@@ -119,7 +127,9 @@ def scan(ctx, path, force):
     gateway = snap.gateway
 
     try:
-        summary = asyncio.run(scanner.scan_dir(path, gateway, force=force))
+        summary = asyncio.run(
+            scanner.scan_dir(path, gateway, force=force, verbose=verbose)
+        )
     except NotADirectoryError:
         click.echo(f"Error: not a directory: {path}", err=True)
         sys.exit(2)
@@ -127,7 +137,8 @@ def scan(ctx, path, force):
         click.echo(f"Scan failed: {e}", err=True)
         sys.exit(1)
 
-    click.echo(json.dumps(summary, sort_keys=True))
+    if verbose > 1:
+        click.echo(json.dumps(summary, sort_keys=True))
 
 
 def entrypoint():

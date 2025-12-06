@@ -128,6 +128,7 @@ async def scan_dir(
     gateway: GatewayClient,
     *,
     force: bool = False,
+    verbose: bool = False,
 ) -> Dict[str, int]:
     """
     Scan a directory tree and publish file.upsert events via the given gateway.
@@ -136,6 +137,7 @@ async def scan_dir(
         root:   Root directory to scan.
         gateway: GatewayClient instance.
         force:  If True, publish events even for cache HITs (reusing cache hash).
+        verbose: If True, print progress info.
 
     Returns a summary dict:
         {
@@ -189,7 +191,7 @@ async def scan_dir(
                 pr = {
                     "path": p,
                     "size": int(st.st_size),
-                    "mtime": float(mti),
+                    "mtime": int(mti),
                     "inode": inode or None,
                     "dev": dev or None,
                 }
@@ -236,7 +238,8 @@ async def scan_dir(
 
             if status == "HIT" and cached_hash and cached_algo:
                 cache_hits += 1
-                print(f"cache: {path} {cached_algo}:{cached_hash}")
+                if verbose > 1:
+                    print(f"cache: {path} {cached_algo}:{cached_hash}")
 
                 if not force:
                     # old behavior: skip publish entirely
@@ -246,12 +249,13 @@ async def scan_dir(
                 algo = cached_algo
                 h = cached_hash
             else:
-                # MISS or missing hash/algo → hash now
+                # MISS or missing hash/algo -> hash now
                 try:
                     algo = "sha1"
                     h = sha1_file(path)
                     hashed += 1
-                    print(f"hash:  {path} {algo}:{h}")
+                    if verbose > 0:
+                        print(f"hash:  {path} {algo}:{h}")
                 except Exception as e:
                     print(f"[scanner] hash error: {path}: {e}", file=sys.stderr)
                     continue
