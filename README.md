@@ -20,7 +20,7 @@ domain-centric interface for querying files, snapshots, and related metadata.
 ## Features (Current)
 
 - Async gateway client using `aiohttp`
-- Domain-focused Python API (`snapfs.files`, `snapfs.snapshots`, …)
+- Domain-focused Python API (`snapfs.files`, `snapfs.events`, …)
 - Filesystem scanner with:
   - Incremental hashing
   - Cache probing

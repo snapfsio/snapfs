@@ -30,6 +30,3 @@ PROBE_BATCH = int(os.getenv("SNAPFS_PROBE_BATCH", "200"))
 
 # Number of items to publish in a single batch
 PUBLISH_BATCH = int(os.getenv("SNAPFS_PUBLISH_BATCH", "200"))
-
-# Maximum size (in bytes) for small file hashing
-HASH_SMALL_MAX = int(os.getenv("SNAPFS_HASH_SMALL_MAX", "10485760"))  # 10 MiB

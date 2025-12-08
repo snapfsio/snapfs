@@ -15,11 +15,15 @@
 # limitations under the License.
 
 import hashlib
+import getpass
 import os
 import sys
+import time
+import uuid
+import socket
 from typing import Any, Dict, List, Tuple
 
-from .config import HASH_SMALL_MAX, PROBE_BATCH, PUBLISH_BATCH
+from .config import PROBE_BATCH, PUBLISH_BATCH
 from .gateway import GatewayClient
 
 try:
@@ -81,13 +85,15 @@ def event_from_stat(
     hash_hex: str,
     *,
     fsize_du: int,
+    root_path: str,
+    scan_id: str,
 ) -> Dict[str, Any]:
     """
     Build an ingest event payload from a file stat + hash, including extended metadata.
     """
-    mtime = float(int(st.st_mtime))
-    atime = float(int(getattr(st, "st_atime", 0)))
-    ctime = float(int(getattr(st, "st_ctime", 0)))
+    mtime = float(getattr(st, "st_mtime", 0.0))
+    atime = float(getattr(st, "st_atime", 0.0))
+    ctime = float(getattr(st, "st_ctime", 0.0))
     size = int(st.st_size)
     inode = int(getattr(st, "st_ino", 0)) or None
     dev = int(getattr(st, "st_dev", 0)) or None
@@ -103,9 +109,16 @@ def event_from_stat(
     gid = int(getattr(st, "st_gid", -1))
     mode = int(getattr(st, "st_mode", 0)) & 0o7777  # include type bits + perms
 
+    # Full-resolution event time
+    seen_at = float(time.time())
+
     return {
         "type": "file.upsert",
         "data": {
+            # scan context
+            "root_path": root_path,
+            "scan_id": scan_id,
+            "seen_at": seen_at,
             # identity / path
             "path": path,
             "dir": dir_name,
@@ -161,6 +174,32 @@ async def scan_dir(
     root = os.path.abspath(root)
     if not os.path.isdir(root):
         raise NotADirectoryError(root)
+
+    # Scan session metadata
+    scan_id = str(uuid.uuid4())
+    hostname = socket.gethostname()
+    user = getpass.getuser()
+    pid = os.getpid()
+    started_at = float(time.time())
+
+    # Emit scan.started
+    start_event = {
+        "type": "scan.started",
+        "data": {
+            "root_path": root,
+            "scan_id": scan_id,
+            "hostname": hostname,
+            "user": user,
+            "pid": pid,
+            "started_at": started_at,
+        },
+    }
+    try:
+        await gateway.publish_events_async([start_event])
+        if verbose:
+            print(f"[scanner] scan.started root={root} scan_id={scan_id}")
+    except Exception as e:
+        print(f"[scanner] failed to publish scan.started: {e}", file=sys.stderr)
 
     # Walk files
     files: List[str] = []
@@ -247,20 +286,14 @@ async def scan_dir(
             cached_algo = res.get("algo")
             cached_hash = res.get("hash")
 
-            if status == "HIT" and cached_hash and cached_algo:
+            if status == "HIT" and cached_hash and cached_algo and not force:
                 cache_hits += 1
                 if verbose > 1:
                     print(f"cache: {path} {cached_algo}:{cached_hash}")
-
-                if not force:
-                    # old behavior: skip publish entirely
-                    continue
-
-                # force=True: reuse cached hash but still publish updated metadata
                 algo = cached_algo
                 h = cached_hash
             else:
-                # MISS or missing hash/algo -> hash now
+                # MISS or force re-hash
                 try:
                     algo = "sha1"
                     h = sha1_file(path)
@@ -278,6 +311,8 @@ async def scan_dir(
                     algo,
                     h,
                     fsize_du=fsize_du,
+                    root_path=root,
+                    scan_id=scan_id,
                 )
             )
 
@@ -304,7 +339,38 @@ async def scan_dir(
         "cache_hits": cache_hits,
         "hashed": hashed,
         "published": published,
+        "scan_id": scan_id,
     }
+
+    finished_at = float(time.time())
+
+    # Emit scan.completed
+    complete_event = {
+        "type": "scan.completed",
+        "data": {
+            "root_path": root,
+            "scan_id": scan_id,
+            "hostname": hostname,
+            "user": user,
+            "pid": pid,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "files_seen": total,
+            "cache_hits": cache_hits,
+            "hashed": hashed,
+            "published": published,
+        },
+    }
+    try:
+        await gateway.publish_events_async([complete_event])
+        if verbose:
+            print(
+                f"[scanner] scan.completed root={root} scan_id={scan_id} "
+                f"files={total}"
+            )
+    except Exception as e:
+        print(f"[scanner] failed to publish scan.completed: {e}", file=sys.stderr)
+
     print(
         f"[scanner] done. files={total} "
         f"cache_hits={cache_hits} hashed={hashed} published={published}"

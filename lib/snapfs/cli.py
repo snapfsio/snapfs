@@ -99,7 +99,7 @@ def query(ctx, sql):
 @click.option(
     "--force",
     is_flag=True,
-    help="Force publishing events even when cache reports HIT (re-sends metadata).",
+    help="Force re-hashing files even when cache reports a hit.",
 )
 @click.option(
     "-v",
@@ -137,7 +137,7 @@ def scan(ctx, path, force: bool = False, verbose: int = 0):
         click.echo(f"Scan failed: {e}", err=True)
         sys.exit(1)
 
-    if verbose > 1:
+    if verbose > 0:
         click.echo(json.dumps(summary, sort_keys=True))
 
 
