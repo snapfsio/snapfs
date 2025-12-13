@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snapfs"
-version = "0.2.0"
+version = "0.2.1"
 description = "SnapFS Python client and CLI"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -17,6 +17,7 @@ authors = [
 dependencies = [
   "aiohttp>=3.8",
   "click>=8.0",
+  "pydantic>=2.7.0",
   "rich>=13.0",
 ]
 

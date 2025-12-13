@@ -15,18 +15,37 @@
 # limitations under the License.
 
 import os
+from typing import Optional
 
-# SnapFS gateway URL
-DEFAULT_GATEWAY = os.getenv("SNAPFS_GATEWAY", "http://localhost:8000")
+from pydantic import BaseModel
 
-# Default subject for SnapFS operations
-DEFAULT_SUBJECT = os.getenv("SNAPFS_SUBJECT", "snapfs.files")
 
-# Optional authentication token for SnapFS gateway
-DEFAULT_TOKEN = os.getenv("SNAPFS_TOKEN")
+class Settings(BaseModel):
+    # Gateway endpoints (aligned with other agents)
+    gateway_ws: str = os.getenv("GATEWAY_WS", "ws://localhost:8000")
+    gateway_http: str = os.getenv("GATEWAY_HTTP", "http://localhost:8000")
 
-# Batch sizes and thresholds
-PROBE_BATCH = int(os.getenv("SNAPFS_PROBE_BATCH", "200"))
+    # Optional auth token
+    token: Optional[str] = os.getenv("SNAPFS_TOKEN")
 
-# Number of items to publish in a single batch
-PUBLISH_BATCH = int(os.getenv("SNAPFS_PUBLISH_BATCH", "200"))
+    # Default subject for ingest routing
+    subject: str = os.getenv("SNAPFS_SUBJECT", "snapfs.files")
+
+    # Scanner batching knobs
+    probe_batch: int = int(os.getenv("SNAPFS_PROBE_BATCH", "200"))
+    publish_batch: int = int(os.getenv("SNAPFS_PUBLISH_BATCH", "200"))
+
+    # Agent identity
+    agent_id: str = os.getenv("SNAPFS_AGENT_ID", "scanner-01")
+
+    # Default filesystem scan root (client machine path)
+    scan_root: str = os.getenv("SNAPFS_SCAN_ROOT", "")
+
+    # WS path for agent control (gateway exposes /agents)
+    ws_path: str = os.getenv("SNAPFS_AGENT_WS_PATH", "/agents")
+
+    # Optional ping interval for WS keepalive
+    ping_interval: int = int(os.getenv("SNAPFS_AGENT_PING_INTERVAL", "30"))
+
+
+settings = Settings()

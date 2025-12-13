@@ -14,16 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import hashlib
 import getpass
+import hashlib
 import os
+import socket
 import sys
 import time
 import uuid
-import socket
 from typing import Any, Dict, List, Tuple
 
-from .config import PROBE_BATCH, PUBLISH_BATCH
+from .config import settings
 from .gateway import GatewayClient
 
 try:
@@ -219,8 +219,8 @@ async def scan_dir(
     hashed = 0
     published = 0
 
-    for i in range(0, total, PROBE_BATCH):
-        batch_paths = files[i : i + PROBE_BATCH]
+    for i in range(0, total, settings.probe_batch):
+        batch_paths = files[i : i + settings.probe_batch]
         probes: List[Dict[str, Any]] = []
         stats: Dict[int, os.stat_result] = {}
 
@@ -317,7 +317,7 @@ async def scan_dir(
             )
 
             # Publish in chunks
-            if len(events) >= PUBLISH_BATCH:
+            if len(events) >= settings.publish_batch:
                 try:
                     await gateway.publish_events_async(events)
                     published += len(events)

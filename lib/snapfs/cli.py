@@ -20,9 +20,10 @@ import sys
 
 import click
 
-from snapfs import __prog__, __version__
-from snapfs import SnapFS, scanner
-from snapfs.config import DEFAULT_GATEWAY
+from snapfs import SnapFS, __prog__, __version__
+from snapfs import agent as agent_mod
+from snapfs import scanner
+from snapfs.config import settings
 
 
 @click.group()
@@ -30,9 +31,9 @@ from snapfs.config import DEFAULT_GATEWAY
 @click.option(
     "--gateway",
     "gateway_url",
-    default=DEFAULT_GATEWAY,
+    default=settings.gateway_http,
     envvar="SNAPFS_GATEWAY",
-    help=f"SnapFS gateway base URL (default: {DEFAULT_GATEWAY}).",
+    help=f"SnapFS gateway base URL (default: {settings.gateway_http}).",
 )
 @click.option(
     "--token",
@@ -139,6 +140,29 @@ def scan(ctx, path, force: bool = False, verbose: int = 0):
 
     if verbose > 0:
         click.echo(json.dumps(summary, sort_keys=True))
+
+
+@cli.group()
+def agent():
+    """SnapFS agent commands."""
+    pass
+
+
+@agent.command("run")
+@click.option(
+    "--root",
+    "scan_root",
+    default=None,
+    help="Default scan root if the gateway does not specify one.",
+)
+@click.option("-v", "--verbose", count=True)
+def agent_run(scan_root, verbose):
+    asyncio.run(
+        agent_mod.run_agent(
+            scan_root=scan_root,
+            verbose=verbose,
+        )
+    )
 
 
 def entrypoint():
