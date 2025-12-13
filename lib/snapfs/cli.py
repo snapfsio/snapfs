@@ -150,15 +150,21 @@ def agent():
 
 @agent.command("run")
 @click.option(
+    "--agent-id",
+    default=None,
+    help="Agent identifier (overrides SNAPFS_AGENT_ID).",
+)
+@click.option(
     "--root",
     "scan_root",
     default=None,
     help="Default scan root if the gateway does not specify one.",
 )
 @click.option("-v", "--verbose", count=True)
-def agent_run(scan_root, verbose):
+def agent_run(agent_id, scan_root, verbose):
     asyncio.run(
         agent_mod.run_agent(
+            agent_id=agent_id,
             scan_root=scan_root,
             verbose=verbose,
         )
