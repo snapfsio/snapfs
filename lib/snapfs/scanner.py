@@ -90,6 +90,15 @@ def event_from_stat(
 ) -> Dict[str, Any]:
     """
     Build an ingest event payload from a file stat + hash, including extended metadata.
+
+    :param path: Full file path.
+    :param st: os.stat_result for the file.
+    :param algo: Hash algorithm name (e.g. "sha1").
+    :param hash_hex: Hex digest of the file hash.
+    :param fsize_du: Disk usage size for the file (hardlink-aware).
+    :param root_path: Root path of the scan.
+    :param scan_id: Scan session identifier.
+    :return: Event dict suitable for publishing.
     """
     mtime = float(getattr(st, "st_mtime", 0.0))
     atime = float(getattr(st, "st_atime", 0.0))
@@ -157,12 +166,6 @@ async def scan_dir(
     """
     Scan a directory tree and publish file.upsert events via the given gateway.
 
-    Args:
-        root:   Root directory to scan.
-        gateway: GatewayClient instance.
-        force:  If True, publish events even for cache HITs (reusing cache hash).
-        verbose: If True, print progress info.
-
     Returns a summary dict:
         {
           "files": total_files_seen,
@@ -170,6 +173,12 @@ async def scan_dir(
           "hashed": n_hashed,
           "published": n_published,
         }
+
+    :param root: Root directory path to scan.
+    :param client: SnapFS client instance.
+    :param force: If True, re-hash files even when cache reports a hit.
+    :param verbose: Verbosity flag.
+    :return: Summary dict.
     """
     root = os.path.abspath(root)
     if not os.path.isdir(root):

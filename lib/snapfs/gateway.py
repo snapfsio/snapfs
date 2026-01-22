@@ -62,6 +62,11 @@ class GatewayClient:
         subject: Optional[str] = None,
         token: Optional[str] = None,
     ):
+        """
+        :param base_url: Base URL of the SnapFS gateway.
+        :param subject: Optional default subject for ingest routing.
+        :param token: Optional auth token for the gateway.
+        """
         self.base_url = (base_url or settings.gateway).rstrip("/")
         self.ws_url = _derive_gateway_ws(self.base_url)
         self.subject = subject or settings.subject
@@ -91,12 +96,7 @@ class GatewayClient:
                 return await resp.json()
 
     def _run(self, coro):
-        """
-        Helper for sync callers.
-
-        Intended for CLI / scripts. Library users can call the `*_async`
-        variants directly if they're already in an event loop.
-        """
+        """Helper to run an async coroutine in a synchronous context."""
         return asyncio.run(coro)
 
     async def cache_probe_batch_async(
@@ -105,7 +105,7 @@ class GatewayClient:
         """
         Probe cache for a batch of file metadata records.
 
-        `probes` is a list of dicts with keys like path / size / mtime / inode / dev.
+        :param probes: List of file metadata probe dicts.
         """
         result = await self._post_json_async("/cache/batch", probes)
         # expect result to already be a list[dict]
@@ -122,6 +122,9 @@ class GatewayClient:
     ) -> Any:
         """
         Publish a list of events to the ingest endpoint.
+
+        :param events: List of event dicts to publish.
+        :param subject: Optional subject for routing (overrides default).
         """
         params = {"subject": subject or self.subject}
         payload = {"events": events}
@@ -133,6 +136,12 @@ class GatewayClient:
         *,
         subject: Optional[str] = None,
     ) -> Any:
+        """
+        Publish a list of events to the ingest endpoint.
+
+        :param events: List of event dicts to publish.
+        :param subject: Optional subject for routing (overrides default).
+        """
         return self._run(self.publish_events_async(events, subject=subject))
 
     async def sql_async(
@@ -148,6 +157,10 @@ class GatewayClient:
 
         And returns something like:
             { "rows": [ {..}, {..}, ... ] }
+
+        :param sql: The SQL query string to execute.
+        :param params: Optional dictionary of query parameters.
+        :return: List of result rows as dictionaries.
         """
         payload: Dict[str, Any] = {"sql": sql}
         if params:
@@ -164,4 +177,11 @@ class GatewayClient:
         sql: str,
         params: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
+        """
+        Execute raw SQL via the SnapFS gateway.
+
+        :param sql: The SQL query string to execute.
+        :param params: Optional dictionary of query parameters.
+        :return: List of result rows as dictionaries.
+        """
         return self._run(self.sql_async(sql, params=params))

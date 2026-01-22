@@ -61,7 +61,15 @@ async def _handle_scan(
     verbose: int,
     lock: asyncio.Lock,
 ) -> None:
-    """Handle SCAN_TARGET command."""
+    """Handle SCAN_TARGET command.
+
+    :param msg: The SCAN_TARGET message dictionary.
+    :param client: SnapFS client instance.
+    :param ws: WebSocket connection to the gateway.
+    :param default_root: Default scan root if not specified in the message.
+    :param verbose: Verbosity level.
+    :param lock: Asyncio lock to prevent concurrent scans.
+    """
     command_id = msg.get("command_id")
     target = msg.get("target") or {}
     options = msg.get("options") or {}
