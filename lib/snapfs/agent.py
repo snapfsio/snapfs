@@ -32,17 +32,20 @@ logger = logging.getLogger(__name__)
 
 
 def _join_ws(base: str, path: str) -> str:
+    """Join base WS URL and path correctly."""
     base = base.rstrip("/")
     path = path if path.startswith("/") else f"/{path}"
     return base + path
 
 
 def _backoff(attempt: int, base: float = 0.5, cap: float = 30.0) -> float:
+    """Exponential backoff with jitter."""
     exp = min(cap, base * (2 ** max(0, attempt)))
     return exp * (0.7 + random.random() * 0.6)
 
 
 async def _send(ws: aiohttp.ClientWebSocketResponse, payload: Dict[str, Any]) -> None:
+    """Send a JSON payload over the WS, with error handling."""
     try:
         await ws.send_json(payload)
     except Exception as e:
@@ -52,13 +55,21 @@ async def _send(ws: aiohttp.ClientWebSocketResponse, payload: Dict[str, Any]) ->
 async def _handle_scan(
     *,
     msg: Dict[str, Any],
-    snap: SnapFS,
+    client: SnapFS,
     ws: aiohttp.ClientWebSocketResponse,
     default_root: str,
     verbose: int,
     lock: asyncio.Lock,
 ) -> None:
-    """Handle SCAN_TARGET command."""
+    """Handle SCAN_TARGET command.
+
+    :param msg: The SCAN_TARGET message dictionary.
+    :param client: SnapFS client instance.
+    :param ws: WebSocket connection to the gateway.
+    :param default_root: Default scan root if not specified in the message.
+    :param verbose: Verbosity level.
+    :param lock: Asyncio lock to prevent concurrent scans.
+    """
     command_id = msg.get("command_id")
     target = msg.get("target") or {}
     options = msg.get("options") or {}
@@ -110,7 +121,7 @@ async def _handle_scan(
 
             summary = await scanner.scan_dir(
                 root,
-                snap.gateway,
+                client,
                 force=force,
                 verbose=verbose,
             )
@@ -139,28 +150,31 @@ async def _handle_scan(
 
 
 async def run_agent(
-    verbose: int = 0, agent_id: Optional[str] = None, scan_root: Optional[str] = None
+    client: SnapFS,
+    agent_id: Optional[str] = None,
+    scan_root: Optional[str] = None,
+    verbose: int = 0,
 ) -> None:
     """
     Connect to gateway WS (/agents) and execute SCAN_TARGET commands.
 
-    Env vars:
-      GATEWAY_HTTP, GATEWAY_WS, SNAPFS_TOKEN, SNAPFS_AGENT_ID, SNAPFS_SCAN_ROOT
+    :param client: SnapFS client instance
+    :param agent_id: Optional agent identifier (overrides SNAPFS_AGENT_ID)
+    :param scan_root: Optional default scan root (overrides SNAPFS_SCAN_ROOT)
+    :param verbose: Verbosity level (0=quiet, 1=info)
     """
     if verbose:
         logging.basicConfig(level=logging.INFO)
 
-    # HTTP base for probes/ingest
-    snap = SnapFS(gateway_url=settings.gateway_http, token=settings.token)
-
+    gateway_ws = client.gateway.ws_url
     agent_id_eff = agent_id or settings.agent_id
     scan_root_eff = scan_root or settings.scan_root
     if not scan_root_eff:
         logger.warning("No default scan root set; SCAN_TARGET must specify root")
 
-    ws_url = _join_ws(settings.gateway_ws, settings.ws_path)
+    ws_url = _join_ws(gateway_ws, settings.ws_path)
 
-    logger.info("SnapFS agent starting agent_id=%r ws=%s", agent_id_eff, ws_url)
+    logger.info("SnapFS agent starting agent_id=%r ws=%s", agent_id_eff, gateway_ws)
 
     lock = asyncio.Lock()
     attempt = 0
@@ -209,7 +223,7 @@ async def run_agent(
                             if t == "SCAN_TARGET":
                                 await _handle_scan(
                                     msg=data,
-                                    snap=snap,
+                                    client=client,
                                     ws=ws,
                                     default_root=scan_root_eff,
                                     verbose=verbose,

@@ -20,13 +20,7 @@ from .gateway import GatewayClient
 
 
 class SnapFS:
-    """
-    High-level SnapFS facade.
-
-    - Owns a GatewayClient (`self.gateway`).
-    - Exposes convenience methods for common operations.
-    - For power users, the underlying `GatewayClient` is available as `.gateway`.
-    """
+    """Client for interacting with the SnapFS gateway."""
 
     def __init__(
         self,
@@ -36,7 +30,12 @@ class SnapFS:
         token: Optional[str] = None,
         gateway: Optional[GatewayClient] = None,
     ):
-        # allow explicit GatewayClient injection (e.g., tests or advanced usage)
+        """
+        :param gateway_url: Base URL of the SnapFS gateway.
+        :param subject: Optional default subject for ingest routing.
+        :param token: Optional auth token for the gateway.
+        :param gateway: Optional pre-configured GatewayClient instance.
+        """
         self.gateway: GatewayClient = gateway or GatewayClient(
             base_url=gateway_url,
             subject=subject,
@@ -51,6 +50,10 @@ class SnapFS:
         """
         Execute raw SQL over the gateway. Intended primarily for internal
         tools / debugging; higher-level query helpers should be preferred.
+
+        :param sql: The SQL query string to execute.
+        :param params: Optional dictionary of query parameters.
+        :return: List of result rows as dictionaries.
         """
         return self.gateway.sql(sql, params=params)
 
@@ -58,8 +61,8 @@ class SnapFS:
         """
         Example convenience API for querying files by path pattern.
 
-        Initially, this can be implemented via sql(), but long-term we can
-        back it with a dedicated gateway endpoint.
+        :param pattern: SQL LIKE pattern for file paths.
+        :return: List of matching file records.
         """
         sql = "SELECT * FROM files WHERE path LIKE :pattern"
         return self.sql(sql, params={"pattern": pattern})

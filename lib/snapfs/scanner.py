@@ -23,8 +23,8 @@ import time
 import uuid
 from typing import Any, Dict, List, Tuple
 
+from .client import SnapFS
 from .config import settings
-from .gateway import GatewayClient
 
 try:
     import pwd
@@ -90,6 +90,15 @@ def event_from_stat(
 ) -> Dict[str, Any]:
     """
     Build an ingest event payload from a file stat + hash, including extended metadata.
+
+    :param path: Full file path.
+    :param st: os.stat_result for the file.
+    :param algo: Hash algorithm name (e.g. "sha1").
+    :param hash_hex: Hex digest of the file hash.
+    :param fsize_du: Disk usage size for the file (hardlink-aware).
+    :param root_path: Root path of the scan.
+    :param scan_id: Scan session identifier.
+    :return: Event dict suitable for publishing.
     """
     mtime = float(getattr(st, "st_mtime", 0.0))
     atime = float(getattr(st, "st_atime", 0.0))
@@ -149,19 +158,13 @@ def event_from_stat(
 
 async def scan_dir(
     root: str,
-    gateway: GatewayClient,
+    client: SnapFS,
     *,
     force: bool = False,
-    verbose: bool = False,
+    verbose: int = 0,
 ) -> Dict[str, int]:
     """
     Scan a directory tree and publish file.upsert events via the given gateway.
-
-    Args:
-        root:   Root directory to scan.
-        gateway: GatewayClient instance.
-        force:  If True, publish events even for cache HITs (reusing cache hash).
-        verbose: If True, print progress info.
 
     Returns a summary dict:
         {
@@ -170,12 +173,19 @@ async def scan_dir(
           "hashed": n_hashed,
           "published": n_published,
         }
+
+    :param root: Root directory path to scan.
+    :param client: SnapFS client instance.
+    :param force: If True, re-hash files even when cache reports a hit.
+    :param verbose: Verbosity level (0=quiet, 1=info)
+    :return: Summary dict.
     """
     root = os.path.abspath(root)
     if not os.path.isdir(root):
         raise NotADirectoryError(root)
 
     # Scan session metadata
+    gateway = client.gateway
     scan_id = str(uuid.uuid4())
     hostname = socket.gethostname()
     user = getpass.getuser()
@@ -258,6 +268,8 @@ async def scan_dir(
         # Probe cache via gateway
         try:
             results = await gateway.cache_probe_batch_async(probes)
+
+        # TODO: optionally raise on gateway connect errors
         except Exception as e:
             print(f"[scanner] cache probe error: {e} (treating as MISS)")
             results = [{"status": "MISS"} for _ in probes]
