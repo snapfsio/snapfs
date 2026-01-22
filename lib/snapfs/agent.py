@@ -21,7 +21,6 @@ import os
 import random
 import time
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 
@@ -30,28 +29,6 @@ from .client import SnapFS
 from .config import settings
 
 logger = logging.getLogger(__name__)
-
-
-def _derive_gateway_ws(gateway: str) -> str:
-    """Derive the WebSocket gateway URL from a single gateway URL."""
-    u = urlparse(gateway)
-
-    if not u.scheme or not u.netloc:
-        raise ValueError(f"Invalid gateway URL: {gateway!r}")
-
-    scheme = u.scheme.lower()
-    if scheme == "http":
-        ws_scheme = "ws"
-    elif scheme == "https":
-        ws_scheme = "wss"
-    elif scheme in ("ws", "wss"):
-        ws_scheme = scheme
-    else:
-        raise ValueError(f"Unsupported gateway scheme: {scheme!r}")
-
-    # Preserve netloc exactly (including explicit port if provided).
-    # Drop path/query/fragment because ws_path is configured separately.
-    return urlunparse((ws_scheme, u.netloc, "", "", "", ""))
 
 
 def _join_ws(base: str, path: str) -> str:
@@ -78,7 +55,7 @@ async def _send(ws: aiohttp.ClientWebSocketResponse, payload: Dict[str, Any]) ->
 async def _handle_scan(
     *,
     msg: Dict[str, Any],
-    snap: SnapFS,
+    client: SnapFS,
     ws: aiohttp.ClientWebSocketResponse,
     default_root: str,
     verbose: int,
@@ -136,7 +113,7 @@ async def _handle_scan(
 
             summary = await scanner.scan_dir(
                 root,
-                snap.gateway,
+                client,
                 force=force,
                 verbose=verbose,
             )
@@ -165,9 +142,9 @@ async def _handle_scan(
 
 
 async def run_agent(
+    client: SnapFS,
     agent_id: Optional[str] = None,
     scan_root: Optional[str] = None,
-    gateway: Optional[str] = None,
     verbose: int = 0,
 ) -> None:
     """
@@ -181,12 +158,7 @@ async def run_agent(
     if verbose:
         logging.basicConfig(level=logging.INFO)
 
-    # Initialize SnapFS client
-    snap = SnapFS(gateway_url=gateway, token=settings.token)
-
-    # Derive WS URL
-    gateway_ws = _derive_gateway_ws(gateway)
-
+    gateway_ws = client.gateway.ws_url
     agent_id_eff = agent_id or settings.agent_id
     scan_root_eff = scan_root or settings.scan_root
     if not scan_root_eff:
@@ -243,7 +215,7 @@ async def run_agent(
                             if t == "SCAN_TARGET":
                                 await _handle_scan(
                                     msg=data,
-                                    snap=snap,
+                                    client=client,
                                     ws=ws,
                                     default_root=scan_root_eff,
                                     verbose=verbose,

@@ -23,8 +23,8 @@ import time
 import uuid
 from typing import Any, Dict, List, Tuple
 
+from .client import SnapFS
 from .config import settings
-from .gateway import GatewayClient
 
 try:
     import pwd
@@ -149,7 +149,7 @@ def event_from_stat(
 
 async def scan_dir(
     root: str,
-    gateway: GatewayClient,
+    client: SnapFS,
     *,
     force: bool = False,
     verbose: bool = False,
@@ -176,6 +176,7 @@ async def scan_dir(
         raise NotADirectoryError(root)
 
     # Scan session metadata
+    gateway = client.gateway
     scan_id = str(uuid.uuid4())
     hostname = socket.gethostname()
     user = getpass.getuser()
@@ -258,6 +259,8 @@ async def scan_dir(
         # Probe cache via gateway
         try:
             results = await gateway.cache_probe_batch_async(probes)
+
+        # TODO: optionally raise on gateway connect errors
         except Exception as e:
             print(f"[scanner] cache probe error: {e} (treating as MISS)")
             results = [{"status": "MISS"} for _ in probes]

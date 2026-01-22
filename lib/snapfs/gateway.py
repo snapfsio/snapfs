@@ -16,10 +16,33 @@
 
 import asyncio
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 
 from .config import settings
+
+
+def _derive_gateway_ws(gateway: str) -> str:
+    """Derive the WebSocket gateway URL from a single gateway URL."""
+    u = urlparse(gateway)
+
+    if not u.scheme or not u.netloc:
+        raise ValueError(f"Invalid gateway URL: {gateway!r}")
+
+    scheme = u.scheme.lower()
+    if scheme == "http":
+        ws_scheme = "ws"
+    elif scheme == "https":
+        ws_scheme = "wss"
+    elif scheme in ("ws", "wss"):
+        ws_scheme = scheme
+    else:
+        raise ValueError(f"Unsupported gateway scheme: {scheme!r}")
+
+    # Preserve netloc exactly (including explicit port if provided).
+    # Drop path/query/fragment because ws_path is configured separately.
+    return urlunparse((ws_scheme, u.netloc, "", "", "", ""))
 
 
 class GatewayClient:
@@ -40,6 +63,7 @@ class GatewayClient:
         token: Optional[str] = None,
     ):
         self.base_url = (base_url or settings.gateway).rstrip("/")
+        self.ws_url = _derive_gateway_ws(self.base_url)
         self.subject = subject or settings.subject
         self.token = token if token is not None else settings.token
 
