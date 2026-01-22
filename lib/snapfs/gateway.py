@@ -39,7 +39,7 @@ class GatewayClient:
         subject: Optional[str] = None,
         token: Optional[str] = None,
     ):
-        self.base_url = (base_url or settings.gateway_http).rstrip("/")
+        self.base_url = (base_url or settings.gateway).rstrip("/")
         self.subject = subject or settings.subject
         self.token = token if token is not None else settings.token
 

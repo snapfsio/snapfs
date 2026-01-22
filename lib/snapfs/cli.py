@@ -15,10 +15,9 @@
 # limitations under the License.
 
 import asyncio
+import click
 import json
 import sys
-
-import click
 
 from snapfs import SnapFS, __prog__, __version__
 from snapfs import agent as agent_mod
@@ -31,9 +30,9 @@ from snapfs.config import settings
 @click.option(
     "--gateway",
     "gateway_url",
-    default=settings.gateway_http,
+    default=settings.gateway,
     envvar="SNAPFS_GATEWAY",
-    help=f"SnapFS gateway base URL (default: {settings.gateway_http}).",
+    help=f"SnapFS gateway base URL (default: {settings.gateway}).",
 )
 @click.option(
     "--token",
@@ -160,12 +159,18 @@ def agent():
     default=None,
     help="Default scan root if the gateway does not specify one.",
 )
+@click.option(
+    "--gateway",
+    default=settings.gateway,
+    help=f"SnapFS gateway base URL (default: {settings.gateway}).",
+)
 @click.option("-v", "--verbose", count=True)
-def agent_run(agent_id, scan_root, verbose):
+def agent_run(agent_id, scan_root, gateway, verbose):
     asyncio.run(
         agent_mod.run_agent(
             agent_id=agent_id,
             scan_root=scan_root,
+            gateway=gateway,
             verbose=verbose,
         )
     )

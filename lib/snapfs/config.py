@@ -21,9 +21,10 @@ from pydantic import BaseModel
 
 
 class Settings(BaseModel):
-    # Gateway endpoints (aligned with other agents)
-    gateway_ws: str = os.getenv("GATEWAY_WS", "ws://localhost:8000")
-    gateway_http: str = os.getenv("GATEWAY_HTTP", "http://localhost:8000")
+    """Configuration settings for SnapFS components, loaded from environment variables."""
+
+    # Gateway URL
+    gateway: str = os.getenv("SNAPFS_GATEWAY", "http://localhost:8000").strip()
 
     # Optional auth token
     token: Optional[str] = os.getenv("SNAPFS_TOKEN")
@@ -41,7 +42,7 @@ class Settings(BaseModel):
     # Default filesystem scan root (client machine path)
     scan_root: str = os.getenv("SNAPFS_SCAN_ROOT", "")
 
-    # WS path for agent control (gateway exposes /agents)
+    # WS path for agent control
     ws_path: str = os.getenv("SNAPFS_AGENT_WS_PATH", "/agents")
 
     # Optional ping interval for WS keepalive
