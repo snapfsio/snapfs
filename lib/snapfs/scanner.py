@@ -161,7 +161,7 @@ async def scan_dir(
     client: SnapFS,
     *,
     force: bool = False,
-    verbose: bool = False,
+    verbose: int = 0,
 ) -> Dict[str, int]:
     """
     Scan a directory tree and publish file.upsert events via the given gateway.
@@ -177,7 +177,7 @@ async def scan_dir(
     :param root: Root directory path to scan.
     :param client: SnapFS client instance.
     :param force: If True, re-hash files even when cache reports a hit.
-    :param verbose: Verbosity flag.
+    :param verbose: Verbosity level (0=quiet, 1=info)
     :return: Summary dict.
     """
     root = os.path.abspath(root)

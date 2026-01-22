@@ -186,11 +186,11 @@ def agent(
     token: Optional[str],
 ) -> None:
     """
-    Run the SnapFS scanner agent (WebSocket-controlled).
+    Run the SnapFS scanner agent.
 
     Examples:
-      snapfs agent run --gateway https://<username>.snapfs.com --root /mnt/data
-      snapfs agent run --gateway http://localhost:8000 --agent-id scanner-01 -v
+      snapfs agent --gateway https://<username>.snapfs.com --root /mnt/data
+      snapfs agent --gateway http://localhost:8000 --agent-id scanner-01 -v
     """
     _require_gateway(gateway_url)
 

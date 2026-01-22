@@ -158,9 +158,9 @@ async def run_agent(
     """
     Connect to gateway WS (/agents) and execute SCAN_TARGET commands.
 
+    :param client: SnapFS client instance
     :param agent_id: Optional agent identifier (overrides SNAPFS_AGENT_ID)
     :param scan_root: Optional default scan root (overrides SNAPFS_SCAN_ROOT)
-    :param gateway: Optional gateway URL (overrides SNAPFS_GATEWAY)
     :param verbose: Verbosity level (0=quiet, 1=info)
     """
     if verbose:
