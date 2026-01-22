@@ -1,0 +1,23 @@
+[Unit]
+Description=SnapFS Agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=snapfs
+Group=snapfs
+
+# Environment Variables
+Environment="SNAPFS_GATEWAY=http://localhost:8000"
+Environment="SNAPFS_AGENT_ID=scanner-01"
+Environment="SNAPFS_SCAN_ROOT=/data"
+
+ExecStart=/usr/local/bin/snapfs agent
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
