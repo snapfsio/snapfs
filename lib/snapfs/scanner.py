@@ -21,7 +21,7 @@ import socket
 import sys
 import time
 import uuid
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .client import SnapFS
 from .config import settings
@@ -44,6 +44,14 @@ def sha1_file(path: str) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _normalize_trigger_type(value: Optional[str]) -> str:
+    """Normalize scan trigger type to manual/schedule/api."""
+    t = str(value or "manual").strip().lower()
+    if t in {"manual", "schedule", "api"}:
+        return t
+    return "manual"
 
 
 def _lookup_owner_group(st: os.stat_result) -> Tuple[Any, Any]:
@@ -162,6 +170,8 @@ async def scan_dir(
     *,
     force: bool = False,
     verbose: int = 0,
+    trigger_type: str = "manual",
+    schedule_id: Optional[str] = None,
 ) -> Dict[str, int]:
     """
     Scan a directory tree and publish file.upsert events via the given gateway.
@@ -178,6 +188,8 @@ async def scan_dir(
     :param client: SnapFS client instance.
     :param force: If True, re-hash files even when cache reports a hit.
     :param verbose: Verbosity level (0=quiet, 1=info)
+    :param trigger_type: Scan trigger source (manual/schedule/api).
+    :param schedule_id: Optional schedule id when trigger_type is schedule.
     :return: Summary dict.
     """
     root = os.path.abspath(root)
@@ -191,6 +203,7 @@ async def scan_dir(
     user = getpass.getuser()
     pid = os.getpid()
     started_at = float(time.time())
+    trigger_type = _normalize_trigger_type(trigger_type)
 
     # Emit scan.started
     start_event = {
@@ -202,6 +215,8 @@ async def scan_dir(
             "user": user,
             "pid": pid,
             "started_at": started_at,
+            "trigger_type": trigger_type,
+            "schedule_id": schedule_id,
         },
     }
     try:
@@ -371,6 +386,8 @@ async def scan_dir(
             "cache_hits": cache_hits,
             "hashed": hashed,
             "published": published,
+            "trigger_type": trigger_type,
+            "schedule_id": schedule_id,
         },
     }
     try:

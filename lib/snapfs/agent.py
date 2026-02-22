@@ -76,6 +76,8 @@ async def _handle_scan(
 
     root = target.get("root") or default_root
     force = bool(options.get("force", False))
+    trigger_type = target.get("trigger_type") or "manual"
+    schedule_id = target.get("schedule_id")
 
     if not root:
         await _send(
@@ -116,7 +118,12 @@ async def _handle_scan(
         try:
             if verbose:
                 logger.info(
-                    "scan command_id=%s root=%s force=%s", command_id, root, force
+                    "scan command_id=%s root=%s force=%s trigger_type=%s schedule_id=%s",
+                    command_id,
+                    root,
+                    force,
+                    trigger_type,
+                    schedule_id,
                 )
 
             summary = await scanner.scan_dir(
@@ -124,6 +131,8 @@ async def _handle_scan(
                 client,
                 force=force,
                 verbose=verbose,
+                trigger_type=trigger_type,
+                schedule_id=schedule_id,
             )
 
             await _send(
@@ -134,6 +143,8 @@ async def _handle_scan(
                     "root": root,
                     "took_s": round(time.time() - started, 3),
                     "summary": summary,
+                    "trigger_type": trigger_type,
+                    "schedule_id": schedule_id,
                 },
             )
         except Exception as e:
@@ -165,6 +176,8 @@ async def run_agent(
     """
     if verbose:
         logging.basicConfig(level=logging.INFO)
+    else:
+        logging.basicConfig(level=logging.WARNING)
 
     gateway_ws = client.gateway.ws_url
     agent_id_eff = agent_id or settings.agent_id
