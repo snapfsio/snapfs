@@ -20,7 +20,8 @@ import logging
 import os
 import random
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -44,12 +45,52 @@ def _backoff(attempt: int, base: float = 0.5, cap: float = 30.0) -> float:
     return exp * (0.7 + random.random() * 0.6)
 
 
-async def _send(ws: aiohttp.ClientWebSocketResponse, payload: Dict[str, Any]) -> None:
-    """Send a JSON payload over the WS, with error handling."""
+async def _send(ws: aiohttp.ClientWebSocketResponse, payload: Dict[str, Any]) -> bool:
+    """Send a JSON payload over the WS.
+
+    Returns True when sent successfully, False when the socket is already closing/closed
+    or a transport-level disconnect happens while sending.
+    """
+    if ws.closed:
+        logger.debug("WS already closed; skipping send payload=%r", payload)
+        return False
+
     try:
         await ws.send_json(payload)
+        return True
+    except (aiohttp.ClientConnectionError, ConnectionResetError) as e:
+        logger.debug("WS send dropped during disconnect: %r payload=%r", e, payload)
+        return False
     except Exception as e:
         logger.warning("WS send failed: %r payload=%r", e, payload)
+        return False
+
+
+def _enforce_gateway_tls(client: SnapFS) -> None:
+    """Refuse insecure remote gateway URLs unless explicitly allowed."""
+    if settings.allow_insecure_gateway:
+        return
+
+    parsed = urlparse(client.gateway.base_url)
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return
+
+    if scheme != "https":
+        raise RuntimeError(
+            "Remote scanner gateway must use HTTPS. "
+            "Set SNAPFS_ALLOW_INSECURE_GATEWAY=1 only for controlled dev environments."
+        )
+
+
+def _scanner_token_scopes() -> List[str]:
+    """Return scanner token scopes requested from config."""
+    raw = (settings.scanner_token_scopes or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 async def _handle_scan(
@@ -189,14 +230,32 @@ async def run_agent(
 
     logger.info("SnapFS agent starting agent_id=%r ws=%s", agent_id_eff, gateway_ws)
 
+    _enforce_gateway_tls(client)
+
     lock = asyncio.Lock()
     attempt = 0
 
     while True:
         try:
+            # If API key is configured, refresh scanner token before each connect/reconnect.
+            if settings.api_key:
+                scopes = _scanner_token_scopes()
+                client.gateway.token = (
+                    await client.gateway.exchange_scanner_token_async(
+                        api_key=settings.api_key,
+                        scopes=scopes or None,
+                    )
+                )
+
+            ws_headers: Dict[str, str] = {}
+            if client.gateway.token:
+                ws_headers["Authorization"] = f"Bearer {client.gateway.token}"
+
             timeout = aiohttp.ClientTimeout(total=None, sock_connect=15, sock_read=None)
             async with aiohttp.ClientSession(timeout=timeout) as sess:
-                async with sess.ws_connect(ws_url, heartbeat=30) as ws:
+                async with sess.ws_connect(
+                    ws_url, heartbeat=30, headers=ws_headers
+                ) as ws:
                     attempt = 0
 
                     await ws.send_json(
@@ -206,6 +265,9 @@ async def run_agent(
                             "agent_type": "scanner",
                             "version": "snapfs",
                             "capabilities": ["scan.fs"],
+                            "root_path": scan_root_eff or settings.scanner_root or None,
+                            "scanner_type": settings.scanner_type,
+                            "max_concurrency": settings.scanner_max_concurrency,
                         }
                     )
 

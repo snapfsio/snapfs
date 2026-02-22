@@ -26,8 +26,21 @@ class Settings(BaseModel):
     # Gateway URL
     gateway: str = os.getenv("SNAPFS_GATEWAY", "http://localhost:8000").strip()
 
-    # Optional auth token
+    # Optional auth token (JWT).
     token: Optional[str] = os.getenv("SNAPFS_TOKEN")
+
+    # Allow HTTP gateway for non-local hosts (not recommended).
+    allow_insecure_gateway: bool = os.getenv("SNAPFS_ALLOW_INSECURE_GATEWAY", "0") in {
+        "1",
+        "true",
+        "True",
+    }
+
+    # API key used to mint short-lived scanner JWTs via /auth/token.
+    api_key: Optional[str] = os.getenv("SNAPFS_API_KEY")
+
+    # Optional CSV list of scanner token scopes requested from /auth/token.
+    scanner_token_scopes: str = os.getenv("SNAPFS_SCANNER_TOKEN_SCOPES", "ingest:write")
 
     # Default subject for ingest routing
     subject: str = os.getenv("SNAPFS_SUBJECT", "snapfs.files")
@@ -41,6 +54,18 @@ class Settings(BaseModel):
 
     # Default filesystem scan root (client machine path)
     scan_root: str = os.getenv("SNAPFS_SCAN_ROOT", "")
+
+    # TODO(v1): Use this as advertised scanner root capability in AGENT_HELLO.
+    # Keep aligned with scan_root for now.
+    scanner_root: str = os.getenv("SNAPFS_SCANNER_ROOT", "").strip()
+
+    # TODO(v1): Reserve for future parallel scan support per scanner process.
+    # Current runtime still executes one scan at a time.
+    scanner_max_concurrency: int = int(os.getenv("SNAPFS_SCANNER_MAX_CONCURRENCY", "1"))
+
+    # TODO(v1): Optional scanner class/capability label for scheduling.
+    # Examples: fs, nfs, s3, gcs
+    scanner_type: str = os.getenv("SNAPFS_SCANNER_TYPE", "fs").strip().lower()
 
     # WS path for agent control
     ws_path: str = os.getenv("SNAPFS_AGENT_WS_PATH", "/agents")

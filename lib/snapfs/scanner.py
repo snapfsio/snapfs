@@ -54,6 +54,15 @@ def _normalize_trigger_type(value: Optional[str]) -> str:
     return "manual"
 
 
+def _is_auth_error(exc: Exception) -> bool:
+    """Return True when exception represents gateway auth failure."""
+    status = getattr(exc, "status", None)
+    if status in {401, 403}:
+        return True
+    msg = str(exc).lower()
+    return "unauthorized" in msg or "forbidden" in msg
+
+
 def _lookup_owner_group(st: os.stat_result) -> Tuple[Any, Any]:
     """
     Best-effort lookup of owner and group names.
@@ -224,6 +233,10 @@ async def scan_dir(
         if verbose:
             print(f"[scanner] scan.started root={root} scan_id={scan_id}")
     except Exception as e:
+        if _is_auth_error(e):
+            raise RuntimeError(
+                "Gateway authentication failed while publishing scan.started"
+            ) from e
         print(f"[scanner] failed to publish scan.started: {e}", file=sys.stderr)
 
     # Walk files
@@ -286,6 +299,10 @@ async def scan_dir(
 
         # TODO: optionally raise on gateway connect errors
         except Exception as e:
+            if _is_auth_error(e):
+                raise RuntimeError(
+                    "Gateway authentication failed during cache probe"
+                ) from e
             print(f"[scanner] cache probe error: {e} (treating as MISS)")
             results = [{"status": "MISS"} for _ in probes]
 
@@ -350,6 +367,10 @@ async def scan_dir(
                     published += len(events)
                     events.clear()
                 except Exception as e:
+                    if _is_auth_error(e):
+                        raise RuntimeError(
+                            "Gateway authentication failed while publishing file events"
+                        ) from e
                     print(f"[scanner] publish error: {e}", file=sys.stderr)
 
         # Flush any remaining events in this probe batch
@@ -359,6 +380,10 @@ async def scan_dir(
                 published += len(events)
                 events.clear()
             except Exception as e:
+                if _is_auth_error(e):
+                    raise RuntimeError(
+                        "Gateway authentication failed while publishing file events"
+                    ) from e
                 print(f"[scanner] publish error: {e}", file=sys.stderr)
 
     summary = {
@@ -398,6 +423,10 @@ async def scan_dir(
                 f"files={total}"
             )
     except Exception as e:
+        if _is_auth_error(e):
+            raise RuntimeError(
+                "Gateway authentication failed while publishing scan.completed"
+            ) from e
         print(f"[scanner] failed to publish scan.completed: {e}", file=sys.stderr)
 
     print(

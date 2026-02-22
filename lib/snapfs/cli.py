@@ -17,7 +17,7 @@
 import asyncio
 import click
 import json
-from typing import Callable, Optional, TypeVar
+from typing import Callable, List, Optional, TypeVar
 
 from snapfs import SnapFS, __prog__, __version__
 from snapfs import agent as agent_mod
@@ -30,6 +30,31 @@ F = TypeVar("F", bound=Callable[..., object])
 def _require_gateway(gateway_url: str) -> None:
     if not gateway_url:
         raise click.ClickException("Missing --gateway (or SNAPFS_GATEWAY).")
+
+
+def _scanner_token_scopes() -> List[str]:
+    """Parse scanner token scopes from settings."""
+    raw = (settings.scanner_token_scopes or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _auto_auth_scanner_client(client: SnapFS, explicit_token: Optional[str]) -> None:
+    """Auto-exchange API key for scanner JWT when no explicit token is provided."""
+    if explicit_token:
+        return
+    if not settings.api_key:
+        return
+
+    scopes = _scanner_token_scopes()
+    token = asyncio.run(
+        client.gateway.exchange_scanner_token_async(
+            api_key=settings.api_key,
+            scopes=scopes or None,
+        )
+    )
+    client.gateway.token = token
 
 
 def gateway_options(func: F) -> F:
@@ -99,6 +124,7 @@ def query(sql: str, gateway_url: str, token: Optional[str]) -> None:
     _require_gateway(gateway_url)
 
     client = SnapFS(gateway_url=gateway_url, token=token)
+    _auto_auth_scanner_client(client, token)
 
     try:
         rows = client.sql(sql)
@@ -145,6 +171,7 @@ def scan(
     _require_gateway(gateway_url)
 
     client = SnapFS(gateway_url=gateway_url, token=token)
+    _auto_auth_scanner_client(client, token)
 
     try:
         summary = asyncio.run(
@@ -195,6 +222,7 @@ def agent(
     _require_gateway(gateway_url)
 
     client = SnapFS(gateway_url=gateway_url, token=token)
+    _auto_auth_scanner_client(client, token)
 
     asyncio.run(
         agent_mod.run_agent(

@@ -144,6 +144,42 @@ class GatewayClient:
         """
         return self._run(self.publish_events_async(events, subject=subject))
 
+    async def exchange_scanner_token_async(
+        self,
+        *,
+        api_key: str,
+        scopes: Optional[List[str]] = None,
+        timeout: float = 15.0,
+    ) -> str:
+        """Exchange an API key for a short-lived scanner JWT.
+
+        :param api_key: Raw API key used as bearer credential.
+        :param scopes: Optional scope narrowing list.
+        :param timeout: HTTP timeout in seconds.
+        :return: Scanner JWT access token.
+        """
+        payload: Dict[str, Any] = {}
+        if scopes:
+            payload["scopes"] = scopes
+
+        url = f"{self.base_url}/auth/token"
+        headers = {"Authorization": f"Bearer {api_key}"}
+
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            ) as resp:
+                resp.raise_for_status()
+                body = await resp.json()
+
+        token = body.get("accessToken")
+        if not token:
+            raise RuntimeError("Gateway /auth/token response missing accessToken")
+        return str(token)
+
     async def sql_async(
         self,
         sql: str,
