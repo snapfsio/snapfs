@@ -45,9 +45,17 @@ class Settings(BaseModel):
     # Default subject for ingest routing
     subject: str = os.getenv("SNAPFS_SUBJECT", "snapfs.files")
 
+    # Subject for lifecycle/telemetry events consumed by analytics/indexing agents.
+    events_subject: str = os.getenv("SNAPFS_EVENTS_SUBJECT", "snapfs.events")
+
     # Scanner batching knobs
     probe_batch: int = int(os.getenv("SNAPFS_PROBE_BATCH", "200"))
     publish_batch: int = int(os.getenv("SNAPFS_PUBLISH_BATCH", "200"))
+
+    # Periodic scan telemetry emission interval in seconds (0 disables).
+    scan_telemetry_interval_sec: int = int(
+        os.getenv("SNAPFS_SCAN_TELEMETRY_INTERVAL_SEC", "10")
+    )
 
     # Agent identity
     agent_id: str = os.getenv("SNAPFS_AGENT_ID", "scanner-01")

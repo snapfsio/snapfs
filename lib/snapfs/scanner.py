@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import getpass
 import hashlib
 import os
@@ -44,6 +45,12 @@ def sha1_file(path: str) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+async def sha1_file_async(path: str) -> str:
+    """Async wrapper for sha1_file."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, sha1_file, path)
 
 
 def _normalize_trigger_type(value: Optional[str]) -> str:
@@ -98,8 +105,8 @@ def _lookup_owner_group(st: os.stat_result) -> Tuple[Any, Any]:
 def event_from_stat(
     path: str,
     st: os.stat_result,
-    algo: str,
-    hash_hex: str,
+    algo: Optional[str],
+    hash_hex: Optional[str],
     *,
     fsize_du: int,
     root_path: str,
@@ -117,9 +124,10 @@ def event_from_stat(
     :param scan_id: Scan session identifier.
     :return: Event dict suitable for publishing.
     """
-    mtime = float(getattr(st, "st_mtime", 0.0))
-    atime = float(getattr(st, "st_atime", 0.0))
-    ctime = float(getattr(st, "st_ctime", 0.0))
+    # Normalize stat times to epoch milliseconds at source.
+    mtime = int(getattr(st, "st_mtime_ns", 0) // 1_000_000)
+    atime = int(getattr(st, "st_atime_ns", 0) // 1_000_000)
+    ctime = int(getattr(st, "st_ctime_ns", 0) // 1_000_000)
     size = int(st.st_size)
     inode = int(getattr(st, "st_ino", 0)) or None
     dev = int(getattr(st, "st_dev", 0)) or None
@@ -255,7 +263,60 @@ async def scan_dir(
     total = len(files)
     cache_hits = 0
     hashed = 0
+    hash_errors = 0
     published = 0
+
+    telemetry_interval_sec = max(0, int(settings.scan_telemetry_interval_sec))
+    last_telemetry_at = time.monotonic()
+
+    async def emit_scan_telemetry(*, status: str, force: bool = False) -> None:
+        """Emit periodic scan telemetry to the events subject."""
+        nonlocal last_telemetry_at
+        if telemetry_interval_sec <= 0:
+            return
+
+        now_mono = time.monotonic()
+        if not force and (now_mono - last_telemetry_at) < telemetry_interval_sec:
+            return
+        last_telemetry_at = now_mono
+
+        elapsed = max(0.001, float(time.time() - started_at))
+        telemetry_event = {
+            "type": "scan.telemetry",
+            "data": {
+                "root_path": root,
+                "scan_id": scan_id,
+                "hostname": hostname,
+                "user": user,
+                "pid": pid,
+                "started_at": started_at,
+                "trigger_type": trigger_type,
+                "schedule_id": schedule_id,
+                "status": status,
+                "files_total": total,
+                "cache_hits": cache_hits,
+                "hashed": hashed,
+                "published": published,
+                "hash_errors": hash_errors,
+                "elapsed_sec": round(elapsed, 3),
+                "files_per_sec": round(float(published) / elapsed, 3),
+            },
+        }
+
+        try:
+            await gateway.publish_events_async(
+                [telemetry_event],
+                subject=settings.events_subject,
+            )
+        except Exception as e:
+            if _is_auth_error(e):
+                raise RuntimeError(
+                    "Gateway authentication failed while publishing scan.telemetry"
+                ) from e
+            if verbose > 0:
+                print(f"[scanner] telemetry publish error: {e}", file=sys.stderr)
+
+    await emit_scan_telemetry(status="running", force=True)
 
     for i in range(0, total, settings.probe_batch):
         batch_paths = files[i : i + settings.probe_batch]
@@ -266,7 +327,7 @@ async def scan_dir(
         for _, p in enumerate(batch_paths):
             try:
                 st = os.stat(p, follow_symlinks=False)
-                mti = int(st.st_mtime)
+                mti = int(st.st_mtime * 1000)
                 inode = int(getattr(st, "st_ino", 0))
                 dev = int(getattr(st, "st_dev", 0))
                 inode_key = (
@@ -340,13 +401,16 @@ async def scan_dir(
                 # MISS or force re-hash
                 try:
                     algo = "sha1"
-                    h = sha1_file(path)
+                    h = await sha1_file_async(path)
                     hashed += 1
                     if verbose > 0:
                         print(f"hash:  {path} {algo}:{h}")
                 except Exception as e:
+                    # Preserve path visibility for this scan to avoid false deletes.
                     print(f"[scanner] hash error: {path}: {e}", file=sys.stderr)
-                    continue
+                    hash_errors += 1
+                    algo = None
+                    h = None
 
             events.append(
                 event_from_stat(
@@ -385,6 +449,10 @@ async def scan_dir(
                         "Gateway authentication failed while publishing file events"
                     ) from e
                 print(f"[scanner] publish error: {e}", file=sys.stderr)
+
+        await emit_scan_telemetry(status="running")
+
+    await emit_scan_telemetry(status="completed", force=True)
 
     summary = {
         "files": total,
@@ -431,6 +499,6 @@ async def scan_dir(
 
     print(
         f"[scanner] done. files={total} "
-        f"cache_hits={cache_hits} hashed={hashed} published={published}"
+        f"cache_hits={cache_hits} hashed={hashed} hash_errors={hash_errors} published={published}"
     )
     return summary
