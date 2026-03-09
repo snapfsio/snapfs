@@ -24,7 +24,7 @@ class Settings(BaseModel):
     """Configuration settings for SnapFS components, loaded from environment variables."""
 
     # Gateway URL
-    gateway: str = os.getenv("SNAPFS_GATEWAY", "http://localhost:8000").strip()
+    gateway: str = os.getenv("SNAPFS_GATEWAY", "http://localhost:8080").strip()
 
     # Optional auth token (JWT).
     token: Optional[str] = os.getenv("SNAPFS_TOKEN")
