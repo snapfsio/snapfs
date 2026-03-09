@@ -76,7 +76,7 @@ class Settings(BaseModel):
     scanner_type: str = os.getenv("SNAPFS_SCANNER_TYPE", "fs").strip().lower()
 
     # WS path for agent control
-    ws_path: str = os.getenv("SNAPFS_AGENT_WS_PATH", "/agents")
+    ws_path: str = os.getenv("SNAPFS_AGENT_WS_PATH", "/ws/agents")
 
     # Optional ping interval for WS keepalive
     ping_interval: int = int(os.getenv("SNAPFS_AGENT_PING_INTERVAL", "30"))

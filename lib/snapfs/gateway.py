@@ -107,7 +107,7 @@ class GatewayClient:
 
         :param probes: List of file metadata probe dicts.
         """
-        result = await self._post_json_async("/cache/batch", probes)
+        result = await self._post_json_async("/api/cache/batch", probes)
         # expect result to already be a list[dict]
         return result  # type: ignore[return-value]
 
@@ -128,7 +128,7 @@ class GatewayClient:
         """
         params = {"subject": subject or self.subject}
         payload = {"events": events}
-        return await self._post_json_async("/ingest", payload, params=params)
+        return await self._post_json_async("/api/ingest", payload, params=params)
 
     def publish_events(
         self,
@@ -162,7 +162,7 @@ class GatewayClient:
         if scopes:
             payload["scopes"] = scopes
 
-        url = f"{self.base_url}/auth/token"
+        url = f"{self.base_url}/api/auth/token"
         headers = {"Authorization": f"Bearer {api_key}"}
 
         async with aiohttp.ClientSession() as sess:
@@ -177,7 +177,7 @@ class GatewayClient:
 
         token = body.get("accessToken")
         if not token:
-            raise RuntimeError("Gateway /auth/token response missing accessToken")
+            raise RuntimeError("Gateway /api/auth/token response missing accessToken")
         return str(token)
 
     async def sql_async(
