@@ -310,7 +310,7 @@ async def run_agent(
                                 logger.info("unhandled message: %r", data)
                     finally:
                         ping_task.cancel()
-                        with contextlib.suppress(Exception):
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
                             await ping_task
 
         except KeyboardInterrupt:
