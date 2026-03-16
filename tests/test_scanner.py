@@ -20,7 +20,7 @@ class DummyAuthError(Exception):
 def test_sha1_file_and_async_match(tmp_path):
     """Test that synchronous and asynchronous SHA-1 hashing produce the same result."""
     path = tmp_path / "sample.txt"
-    path.write_text("snapfs test data\n", encoding="utf-8")
+    path.write_bytes(b"snapfs test data\n")
 
     sync_hash = scanner.sha1_file(str(path))
     async_hash = __import__("asyncio").run(scanner.sha1_file_async(str(path)))
