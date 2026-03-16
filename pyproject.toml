@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snapfs"
-version = "0.2.4"
+version = "0.2.5"
 description = "SnapFS Python client and CLI"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -35,6 +35,11 @@ Issues   = "https://github.com/snapfsio/snapfs/issues"
 
 [project.scripts]
 snapfs = "snapfs.cli:entrypoint"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "lib"}

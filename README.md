@@ -28,6 +28,20 @@ or install from source:
 pip install -e .
 ```
 
+## Development
+
+Install developer dependencies:
+
+```bash
+pip install -e .[dev]
+```
+
+Run the test suite:
+
+```bash
+pytest -q
+```
+
 ## Quick Start
 
 Scan a directory and publish metadata:
