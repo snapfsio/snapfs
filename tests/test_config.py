@@ -8,6 +8,7 @@ import snapfs.config as config_module
 
 
 def reload_settings(monkeypatch, **env):
+    """Helper function to reload the Settings class with a modified environment."""
     for key in [
         "SNAPFS_GATEWAY",
         "SNAPFS_ALLOW_INSECURE_GATEWAY",
@@ -34,6 +35,7 @@ def reload_settings(monkeypatch, **env):
 
 
 def test_settings_defaults(monkeypatch):
+    """Test that Settings reads the default values when no environment variables are set."""
     settings = reload_settings(monkeypatch)
 
     assert settings.gateway == "http://localhost:8080"
@@ -44,6 +46,7 @@ def test_settings_defaults(monkeypatch):
 
 
 def test_settings_reads_environment(monkeypatch):
+    """Test that Settings correctly reads values from environment variables."""
     settings = reload_settings(
         monkeypatch,
         SNAPFS_GATEWAY="https://tenant.snapfs.com",
