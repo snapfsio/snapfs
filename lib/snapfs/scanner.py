@@ -213,7 +213,6 @@ async def scan_dir(
     if not os.path.isdir(root):
         raise NotADirectoryError(root)
 
-    # Scan session metadata
     gateway = client.gateway
     scan_id = str(uuid.uuid4())
     hostname = socket.gethostname()
@@ -222,7 +221,15 @@ async def scan_dir(
     started_at = float(time.time())
     trigger_type = _normalize_trigger_type(trigger_type)
 
-    # Emit scan.started
+    files: List[str] = []
+    walk_errors = 0
+    permission_errors = 0
+    total = 0
+    cache_hits = 0
+    hashed = 0
+    hash_errors = 0
+    published = 0
+
     start_event = {
         "type": "scan.started",
         "data": {
@@ -247,36 +254,13 @@ async def scan_dir(
             ) from e
         print(f"[scanner] failed to publish scan.started: {e}", file=sys.stderr)
 
-    # Walk files
-    files: List[str] = []
-    for dirpath, _, filenames in os.walk(root):
-        for name in filenames:
-            files.append(os.path.join(dirpath, name))
-
-    # seen_inodes: used to avoid re-probing / re-hashing identical content
-    seen_inodes: set[Tuple[int, int, int, int]] = set()  # (dev, ino, size, mtime_int)
-
-    # du_inodes: used to compute fsize_du for hardlinks
-    # Only the first time we see a (dev, ino) pair do we "charge" size to fsize_du.
-    du_inodes: set[Tuple[int, int]] = set()
-
-    total = len(files)
-    cache_hits = 0
-    hashed = 0
-    hash_errors = 0
-    published = 0
-
-    telemetry_interval_sec = max(0, int(settings.scan_telemetry_interval_sec))
-    last_telemetry_at = time.monotonic()
-
-    async def emit_scan_telemetry(*, status: str, force: bool = False) -> None:
-        """Emit periodic scan telemetry to the events subject."""
+    async def emit_scan_telemetry(*, status: str, force_emit: bool = False) -> None:
         nonlocal last_telemetry_at
         if telemetry_interval_sec <= 0:
             return
 
         now_mono = time.monotonic()
-        if not force and (now_mono - last_telemetry_at) < telemetry_interval_sec:
+        if not force_emit and (now_mono - last_telemetry_at) < telemetry_interval_sec:
             return
         last_telemetry_at = now_mono
 
@@ -298,6 +282,9 @@ async def scan_dir(
                 "hashed": hashed,
                 "published": published,
                 "hash_errors": hash_errors,
+                "walk_errors": walk_errors,
+                "permission_errors": permission_errors,
+                "authoritative_for_deletes": (walk_errors + permission_errors) == 0,
                 "elapsed_sec": round(elapsed, 3),
                 "files_per_sec": round(float(published) / elapsed, 3),
             },
@@ -316,116 +303,185 @@ async def scan_dir(
             if verbose > 0:
                 print(f"[scanner] telemetry publish error: {e}", file=sys.stderr)
 
-    await emit_scan_telemetry(status="running", force=True)
+    async def emit_terminal_event(
+        event_type: str, *, error_message: Optional[str] = None
+    ) -> None:
+        payload = {
+            "root_path": root,
+            "scan_id": scan_id,
+            "hostname": hostname,
+            "user": user,
+            "pid": pid,
+            "started_at": started_at,
+            "finished_at": float(time.time()),
+            "files_seen": total,
+            "cache_hits": cache_hits,
+            "hashed": hashed,
+            "published": published,
+            "hash_errors": hash_errors,
+            "walk_errors": walk_errors,
+            "permission_errors": permission_errors,
+            "authoritative_for_deletes": (walk_errors + permission_errors) == 0,
+            "trigger_type": trigger_type,
+            "schedule_id": schedule_id,
+        }
+        if error_message:
+            payload["error"] = error_message
 
-    for i in range(0, total, settings.probe_batch):
-        batch_paths = files[i : i + settings.probe_batch]
-        probes: List[Dict[str, Any]] = []
-        stats: Dict[int, os.stat_result] = {}
-
-        # Build probes and skip duplicates within this run by inode tuple
-        for _, p in enumerate(batch_paths):
-            try:
-                st = os.stat(p, follow_symlinks=False)
-                mti = int(st.st_mtime * 1000)
-                inode = int(getattr(st, "st_ino", 0))
-                dev = int(getattr(st, "st_dev", 0))
-                inode_key = (
-                    (dev, inode, int(st.st_size), mti) if (dev and inode) else None
-                )
-                if inode_key and inode_key in seen_inodes:
-                    continue
-                if inode_key:
-                    seen_inodes.add(inode_key)
-                pr = {
-                    "path": p,
-                    "size": int(st.st_size),
-                    "mtime": int(mti),
-                    "inode": inode or None,
-                    "dev": dev or None,
-                }
-                probes.append(pr)
-                stats[len(probes) - 1] = st
-            except FileNotFoundError:
-                continue
-            except Exception as e:
-                print(f"[scanner] stat error: {p}: {e}", file=sys.stderr)
-
-        if not probes:
-            continue
-
-        # Probe cache via gateway
+        terminal_event = {"type": event_type, "data": payload}
         try:
-            results = await gateway.cache_probe_batch_async(probes)
-
-        # TODO: optionally raise on gateway connect errors
+            await gateway.publish_events_async([terminal_event])
+            if verbose:
+                print(
+                    f"[scanner] {event_type} root={root} scan_id={scan_id} "
+                    f"files={total}"
+                )
         except Exception as e:
             if _is_auth_error(e):
                 raise RuntimeError(
-                    "Gateway authentication failed during cache probe"
+                    f"Gateway authentication failed while publishing {event_type}"
                 ) from e
-            print(f"[scanner] cache probe error: {e} (treating as MISS)")
-            results = [{"status": "MISS"} for _ in probes]
+            print(f"[scanner] failed to publish {event_type}: {e}", file=sys.stderr)
 
-        # For each result, decide whether to hash and/or publish
-        events: List[Dict[str, Any]] = []
-        for idx, res in enumerate(results):
-            path = probes[idx]["path"]
-            st = stats[idx]
+    def _on_walk_error(err: OSError) -> None:
+        nonlocal walk_errors, permission_errors
+        walk_errors += 1
+        if isinstance(err, PermissionError):
+            permission_errors += 1
+        print(
+            f"[scanner] walk error: {getattr(err, 'filename', root)}: {err}",
+            file=sys.stderr,
+        )
 
-            # Compute fsize_du with hardlink awareness
-            size = int(st.st_size)
-            inode = int(getattr(st, "st_ino", 0) or 0)
-            dev = int(getattr(st, "st_dev", 0) or 0)
-            nlinks = int(getattr(st, "st_nlink", 1) or 1)
+    for dirpath, _, filenames in os.walk(root, onerror=_on_walk_error):
+        for name in filenames:
+            files.append(os.path.join(dirpath, name))
 
-            fsize_du = size
-            if inode and dev and nlinks > 1:
-                inode_du_key = (dev, inode)
-                if inode_du_key in du_inodes:
-                    fsize_du = 0
-                else:
-                    du_inodes.add(inode_du_key)
+    seen_inodes: set[Tuple[int, int, int, int]] = set()
+    du_inodes: set[Tuple[int, int]] = set()
 
-            status = res.get("status")
-            cached_algo = res.get("algo")
-            cached_hash = res.get("hash")
+    total = len(files)
+    telemetry_interval_sec = max(0, int(settings.scan_telemetry_interval_sec))
+    last_telemetry_at = time.monotonic()
 
-            if status == "HIT" and cached_hash and cached_algo and not force:
-                cache_hits += 1
-                if verbose > 1:
-                    print(f"cache: {path} {cached_algo}:{cached_hash}")
-                algo = cached_algo
-                h = cached_hash
-            else:
-                # MISS or force re-hash
+    try:
+        await emit_scan_telemetry(status="running", force_emit=True)
+
+        for i in range(0, total, settings.probe_batch):
+            batch_paths = files[i : i + settings.probe_batch]
+            probes: List[Dict[str, Any]] = []
+            stats: Dict[int, os.stat_result] = {}
+
+            for p in batch_paths:
                 try:
-                    algo = "sha1"
-                    h = await sha1_file_async(path)
-                    hashed += 1
-                    if verbose > 0:
-                        print(f"hash:  {path} {algo}:{h}")
+                    st = os.stat(p, follow_symlinks=False)
+                    mti = int(st.st_mtime * 1000)
+                    inode = int(getattr(st, "st_ino", 0))
+                    dev = int(getattr(st, "st_dev", 0))
+                    inode_key = (
+                        (dev, inode, int(st.st_size), mti) if (dev and inode) else None
+                    )
+                    if inode_key and inode_key in seen_inodes:
+                        continue
+                    if inode_key:
+                        seen_inodes.add(inode_key)
+                    probes.append(
+                        {
+                            "path": p,
+                            "size": int(st.st_size),
+                            "mtime": int(mti),
+                            "inode": inode or None,
+                            "dev": dev or None,
+                        }
+                    )
+                    stats[len(probes) - 1] = st
+                except FileNotFoundError:
+                    continue
+                except PermissionError as e:
+                    permission_errors += 1
+                    print(f"[scanner] stat permission error: {p}: {e}", file=sys.stderr)
                 except Exception as e:
-                    # Preserve path visibility for this scan to avoid false deletes.
-                    print(f"[scanner] hash error: {path}: {e}", file=sys.stderr)
-                    hash_errors += 1
-                    algo = None
-                    h = None
+                    print(f"[scanner] stat error: {p}: {e}", file=sys.stderr)
 
-            events.append(
-                event_from_stat(
-                    path,
-                    st,
-                    algo,
-                    h,
-                    fsize_du=fsize_du,
-                    root_path=root,
-                    scan_id=scan_id,
+            if not probes:
+                continue
+
+            try:
+                results = await gateway.cache_probe_batch_async(probes)
+            except Exception as e:
+                if _is_auth_error(e):
+                    raise RuntimeError(
+                        "Gateway authentication failed during cache probe"
+                    ) from e
+                print(f"[scanner] cache probe error: {e} (treating as MISS)")
+                results = [{"status": "MISS"} for _ in probes]
+
+            events: List[Dict[str, Any]] = []
+            for idx, res in enumerate(results):
+                path = probes[idx]["path"]
+                st = stats[idx]
+
+                size = int(st.st_size)
+                inode = int(getattr(st, "st_ino", 0) or 0)
+                dev = int(getattr(st, "st_dev", 0) or 0)
+                nlinks = int(getattr(st, "st_nlink", 1) or 1)
+
+                fsize_du = size
+                if inode and dev and nlinks > 1:
+                    inode_du_key = (dev, inode)
+                    if inode_du_key in du_inodes:
+                        fsize_du = 0
+                    else:
+                        du_inodes.add(inode_du_key)
+
+                status = res.get("status")
+                cached_algo = res.get("algo")
+                cached_hash = res.get("hash")
+
+                if status == "HIT" and cached_hash and cached_algo and not force:
+                    cache_hits += 1
+                    if verbose > 1:
+                        print(f"cache: {path} {cached_algo}:{cached_hash}")
+                    algo = cached_algo
+                    h = cached_hash
+                else:
+                    try:
+                        algo = "sha1"
+                        h = await sha1_file_async(path)
+                        hashed += 1
+                        if verbose > 0:
+                            print(f"hash:  {path} {algo}:{h}")
+                    except Exception as e:
+                        print(f"[scanner] hash error: {path}: {e}", file=sys.stderr)
+                        hash_errors += 1
+                        algo = None
+                        h = None
+
+                events.append(
+                    event_from_stat(
+                        path,
+                        st,
+                        algo,
+                        h,
+                        fsize_du=fsize_du,
+                        root_path=root,
+                        scan_id=scan_id,
+                    )
                 )
-            )
 
-            # Publish in chunks
-            if len(events) >= settings.publish_batch:
+                if len(events) >= settings.publish_batch:
+                    try:
+                        await gateway.publish_events_async(events)
+                        published += len(events)
+                        events.clear()
+                    except Exception as e:
+                        if _is_auth_error(e):
+                            raise RuntimeError(
+                                "Gateway authentication failed while publishing file events"
+                            ) from e
+                        print(f"[scanner] publish error: {e}", file=sys.stderr)
+
+            if events:
                 try:
                     await gateway.publish_events_async(events)
                     published += len(events)
@@ -437,68 +493,31 @@ async def scan_dir(
                         ) from e
                     print(f"[scanner] publish error: {e}", file=sys.stderr)
 
-        # Flush any remaining events in this probe batch
-        if events:
-            try:
-                await gateway.publish_events_async(events)
-                published += len(events)
-                events.clear()
-            except Exception as e:
-                if _is_auth_error(e):
-                    raise RuntimeError(
-                        "Gateway authentication failed while publishing file events"
-                    ) from e
-                print(f"[scanner] publish error: {e}", file=sys.stderr)
+            await emit_scan_telemetry(status="running")
 
-        await emit_scan_telemetry(status="running")
-
-    await emit_scan_telemetry(status="completed", force=True)
-
-    summary = {
-        "files": total,
-        "cache_hits": cache_hits,
-        "hashed": hashed,
-        "published": published,
-        "scan_id": scan_id,
-    }
-
-    finished_at = float(time.time())
-
-    # Emit scan.completed
-    complete_event = {
-        "type": "scan.completed",
-        "data": {
-            "root_path": root,
-            "scan_id": scan_id,
-            "hostname": hostname,
-            "user": user,
-            "pid": pid,
-            "started_at": started_at,
-            "finished_at": finished_at,
-            "files_seen": total,
+        await emit_scan_telemetry(status="completed", force_emit=True)
+        summary = {
+            "files": total,
             "cache_hits": cache_hits,
             "hashed": hashed,
             "published": published,
-            "trigger_type": trigger_type,
-            "schedule_id": schedule_id,
-        },
-    }
-    try:
-        await gateway.publish_events_async([complete_event])
-        if verbose:
-            print(
-                f"[scanner] scan.completed root={root} scan_id={scan_id} "
-                f"files={total}"
-            )
+            "scan_id": scan_id,
+        }
+        await emit_terminal_event("scan.completed")
+        print(
+            f"[scanner] done. files={total} "
+            f"cache_hits={cache_hits} hashed={hashed} hash_errors={hash_errors} "
+            f"walk_errors={walk_errors} permission_errors={permission_errors} published={published}"
+        )
+        return summary
+    except (KeyboardInterrupt, asyncio.CancelledError) as e:
+        await emit_scan_telemetry(status="canceled", force_emit=True)
+        await emit_terminal_event(
+            "scan.cancelled",
+            error_message=str(e) or "scan cancelled",
+        )
+        raise
     except Exception as e:
-        if _is_auth_error(e):
-            raise RuntimeError(
-                "Gateway authentication failed while publishing scan.completed"
-            ) from e
-        print(f"[scanner] failed to publish scan.completed: {e}", file=sys.stderr)
-
-    print(
-        f"[scanner] done. files={total} "
-        f"cache_hits={cache_hits} hashed={hashed} hash_errors={hash_errors} published={published}"
-    )
-    return summary
+        await emit_scan_telemetry(status="failed", force_emit=True)
+        await emit_terminal_event("scan.failed", error_message=str(e))
+        raise

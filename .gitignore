@@ -40,6 +40,7 @@ vite.config.ts.timestamp*
 .vscode/
 
 # Build artifacts
+build/
 client/.vite/
 client/build/
 client/coverage/
@@ -51,9 +52,7 @@ client/coverage/
 *.seed
 *.pid.lock
 docker-compose.override.yml
-.env
-.env.local
-.env.*.local
+.env.*
 
 # -----------------
 # Terraform (infra/)

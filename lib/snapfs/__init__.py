@@ -16,7 +16,7 @@
 
 __author__ = "Ryan Galloway <ryan@rsg.io>"
 __prog__ = "snapfs"
-__version__ = "0.2.4"
+__version__ = "0.3.0"
 __doc__ = """
 Intelligent filesystem indexing and deduplication for massive data sets
 """
