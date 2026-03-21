@@ -1,5 +1,5 @@
 [Unit]
-Description=SnapFS Agent
+Description=SnapFS Agent (%i)
 Wants=network-online.target
 After=network-online.target
 
@@ -7,9 +7,9 @@ After=network-online.target
 Type=simple
 User=snapfs
 Group=snapfs
-EnvironmentFile=-/etc/snapfs/agent.env
-WorkingDirectory=/var/lib/snapfs
-ExecStart=__SNAPFS_EXEC__ agent
+EnvironmentFile=-/etc/snapfs/agent-%i.env
+WorkingDirectory=/var/lib/snapfs/%i
+ExecStart=/bin/sh -lc 'exec "$SNAPFS_BIN" agent'
 Restart=always
 RestartSec=3
 StandardOutput=journal

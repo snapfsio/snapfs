@@ -8,18 +8,16 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
-SERVICE_UNIT="snapfs-agent.service"
-SRC="${SCRIPT_DIR}/${SERVICE_UNIT}"
-DST="${SYSTEMD_DIR}/${SERVICE_UNIT}"
+SERVICE_TEMPLATE_UNIT="snapfs-agent@.service"
+TEMPLATE_SRC="${SCRIPT_DIR}/${SERVICE_TEMPLATE_UNIT}"
+TEMPLATE_DST="${SYSTEMD_DIR}/${SERVICE_TEMPLATE_UNIT}"
 
 SNAPFS_USER="${SNAPFS_USER:-snapfs}"
 SNAPFS_GROUP="${SNAPFS_GROUP:-snapfs}"
-STATE_DIR="${SNAPFS_STATE_DIR:-/var/lib/snapfs}"
+BASE_STATE_DIR="${SNAPFS_STATE_DIR:-/var/lib/snapfs}"
 CONFIG_DIR="${SNAPFS_CONFIG_DIR:-/etc/snapfs}"
-ENV_FILE="${SNAPFS_ENV_FILE:-${CONFIG_DIR}/agent.env}"
-
+DEFAULT_SCANNER_NAME="${SNAPFS_SCANNER_NAME:-${SNAPFS_AGENT_ID:-scanner-01}}"
 DEFAULT_GATEWAY="${SNAPFS_GATEWAY:-}"
-DEFAULT_AGENT_ID="${SNAPFS_AGENT_ID:-scanner-01}"
 DEFAULT_SCAN_ROOT="${SNAPFS_SCAN_ROOT:-/data}"
 DEFAULT_API_KEY="${SNAPFS_API_KEY:-}"
 DEFAULT_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES:-ingest:write}"
@@ -154,24 +152,58 @@ discover_snapfs() {
   command -v snapfs || true
 }
 
-if [[ ! -f "${SRC}" ]]; then
-  echo "[ERR] Missing unit file: ${SRC}" >&2
-  exit 1
-fi
+validate_scanner_name() {
+  local name="$1"
 
-if [[ "$AS_ROOT" == "0" ]]; then
-  if [[ -f "${ENV_FILE}" ]]; then
-    echo "==> Loading existing configuration from ${ENV_FILE}"
+  if [[ -z "$name" ]]; then
+    echo "[ERR] Scanner name is required" >&2
+    exit 1
+  fi
+
+  if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "[ERR] Scanner name must start with an alphanumeric character and contain only letters, digits, dot, underscore, or dash" >&2
+    exit 1
+  fi
+}
+
+load_existing_defaults() {
+  local env_file="$1"
+  if [[ -f "$env_file" ]]; then
+    echo "==> Loading existing configuration from ${env_file}"
     # shellcheck disable=SC1090
-    source "${ENV_FILE}"
+    source "$env_file"
     DEFAULT_GATEWAY="${SNAPFS_GATEWAY:-$DEFAULT_GATEWAY}"
-    DEFAULT_AGENT_ID="${SNAPFS_AGENT_ID:-$DEFAULT_AGENT_ID}"
     DEFAULT_SCAN_ROOT="${SNAPFS_SCAN_ROOT:-$DEFAULT_SCAN_ROOT}"
     DEFAULT_API_KEY="${SNAPFS_API_KEY:-$DEFAULT_API_KEY}"
     DEFAULT_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES:-$DEFAULT_SCOPES}"
     DEFAULT_ALLOW_INSECURE="${SNAPFS_ALLOW_INSECURE_GATEWAY:-$DEFAULT_ALLOW_INSECURE}"
+    if [[ -n "${SNAPFS_AGENT_ID:-}" ]]; then
+      DEFAULT_SCANNER_NAME="${SNAPFS_AGENT_ID}"
+    fi
   fi
+}
 
+instance_env_file() {
+  local scanner_name="$1"
+  printf '%s/agent-%s.env' "$CONFIG_DIR" "$scanner_name"
+}
+
+instance_state_dir() {
+  local scanner_name="$1"
+  printf '%s/%s' "$BASE_STATE_DIR" "$scanner_name"
+}
+
+instance_service_unit() {
+  local scanner_name="$1"
+  printf 'snapfs-agent@%s.service' "$scanner_name"
+}
+
+if [[ ! -f "${TEMPLATE_SRC}" ]]; then
+  echo "[ERR] Missing unit file: ${TEMPLATE_SRC}" >&2
+  exit 1
+fi
+
+if [[ "$AS_ROOT" == "0" ]]; then
   echo "==> SnapFS agent installer"
 
   DETECTED_SNAPFS_BIN="$(discover_snapfs)"
@@ -186,7 +218,15 @@ if [[ "$AS_ROOT" == "0" ]]; then
     echo "       pip install snapfs"
   fi
 
-  SNAPFS_BIN_VALUE="$(trim "$(prompt_value 'SnapFS executable path' "${DETECTED_SNAPFS_BIN}")")"
+  SCANNER_NAME_VALUE="$(trim "$(prompt_value 'Scanner name' "$DEFAULT_SCANNER_NAME")")"
+  validate_scanner_name "$SCANNER_NAME_VALUE"
+
+  ENV_FILE="$(instance_env_file "$SCANNER_NAME_VALUE")"
+  STATE_DIR="$(instance_state_dir "$SCANNER_NAME_VALUE")"
+  SERVICE_UNIT="$(instance_service_unit "$SCANNER_NAME_VALUE")"
+  load_existing_defaults "$ENV_FILE"
+
+  SNAPFS_BIN_VALUE="$(trim "$(prompt_value 'SnapFS executable path' "${SNAPFS_BIN:-$DETECTED_SNAPFS_BIN}")")"
   validate_snapfs_bin "${SNAPFS_BIN_VALUE}"
   warn_if_user_managed_path "${SNAPFS_BIN_VALUE}"
 
@@ -194,12 +234,6 @@ if [[ "$AS_ROOT" == "0" ]]; then
   SNAPFS_GATEWAY_VALUE="$(normalize_gateway "$gateway_input")"
   if [[ -z "$SNAPFS_GATEWAY_VALUE" ]]; then
     echo "[ERR] Gateway host or URL is required" >&2
-    exit 1
-  fi
-
-  SNAPFS_AGENT_ID_VALUE="$(trim "$(prompt_value 'Agent ID' "$DEFAULT_AGENT_ID")")"
-  if [[ -z "$SNAPFS_AGENT_ID_VALUE" ]]; then
-    echo "[ERR] Agent ID is required" >&2
     exit 1
   fi
 
@@ -234,12 +268,14 @@ if [[ "$AS_ROOT" == "0" ]]; then
 
   echo
   echo "Summary:"
+  echo "  scanner    : ${SCANNER_NAME_VALUE}"
   echo "  snapfs bin : ${SNAPFS_BIN_VALUE}"
   echo "  gateway    : ${SNAPFS_GATEWAY_VALUE}"
-  echo "  agent id   : ${SNAPFS_AGENT_ID_VALUE}"
+  echo "  agent id   : ${SCANNER_NAME_VALUE}"
   echo "  scan root  : ${SNAPFS_SCAN_ROOT_VALUE}"
   echo "  env file   : ${ENV_FILE}"
-  echo "  unit file  : ${DST}"
+  echo "  state dir  : ${STATE_DIR}"
+  echo "  service    : ${SERVICE_UNIT}"
   echo
 
   confirm_yes "Proceed with systemd installation using sudo?" "Y" || exit 0
@@ -247,16 +283,16 @@ if [[ "$AS_ROOT" == "0" ]]; then
   exec sudo \
     SNAPFS_BIN="${SNAPFS_BIN_VALUE}" \
     SNAPFS_GATEWAY="${SNAPFS_GATEWAY_VALUE}" \
-    SNAPFS_AGENT_ID="${SNAPFS_AGENT_ID_VALUE}" \
+    SNAPFS_AGENT_ID="${SCANNER_NAME_VALUE}" \
     SNAPFS_SCAN_ROOT="${SNAPFS_SCAN_ROOT_VALUE}" \
     SNAPFS_API_KEY="${SNAPFS_API_KEY_VALUE}" \
     SNAPFS_SCANNER_TOKEN_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES_VALUE}" \
     SNAPFS_ALLOW_INSECURE_GATEWAY="${SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE}" \
+    SNAPFS_SCANNER_NAME="${SCANNER_NAME_VALUE}" \
     SNAPFS_USER="${SNAPFS_USER}" \
     SNAPFS_GROUP="${SNAPFS_GROUP}" \
-    SNAPFS_STATE_DIR="${STATE_DIR}" \
+    SNAPFS_STATE_DIR="${BASE_STATE_DIR}" \
     SNAPFS_CONFIG_DIR="${CONFIG_DIR}" \
-    SNAPFS_ENV_FILE="${ENV_FILE}" \
     SYSTEMD_DIR="${SYSTEMD_DIR}" \
     bash "$0" --as-root
 fi
@@ -267,6 +303,39 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 validate_snapfs_bin "${SNAPFS_BIN}"
+validate_scanner_name "${SNAPFS_SCANNER_NAME}"
+
+SERVICE_UNIT="$(instance_service_unit "$SNAPFS_SCANNER_NAME")"
+ENV_FILE="$(instance_env_file "$SNAPFS_SCANNER_NAME")"
+STATE_DIR="$(instance_state_dir "$SNAPFS_SCANNER_NAME")"
+
+config_tmp="$(mktemp)"
+cat > "$config_tmp" <<CFG
+# SnapFS agent configuration
+# Edit this file later if the gateway, API key, or scan root changes,
+# then run: sudo systemctl restart ${SERVICE_UNIT}
+SNAPFS_BIN=${SNAPFS_BIN}
+SNAPFS_GATEWAY=${SNAPFS_GATEWAY}
+SNAPFS_AGENT_ID=${SNAPFS_AGENT_ID}
+SNAPFS_SCAN_ROOT=${SNAPFS_SCAN_ROOT}
+SNAPFS_API_KEY=${SNAPFS_API_KEY}
+CFG
+
+if [[ -n "${SNAPFS_SCANNER_TOKEN_SCOPES:-}" ]]; then
+  printf 'SNAPFS_SCANNER_TOKEN_SCOPES=%s\n' "${SNAPFS_SCANNER_TOKEN_SCOPES}" >> "$config_tmp"
+fi
+printf 'SNAPFS_ALLOW_INSECURE_GATEWAY=%s\n' "${SNAPFS_ALLOW_INSECURE_GATEWAY:-0}" >> "$config_tmp"
+
+unit_changed=0
+config_changed=0
+
+if [[ ! -f "$TEMPLATE_DST" ]] || ! cmp -s "$TEMPLATE_SRC" "$TEMPLATE_DST"; then
+  echo "==> Installing ${SERVICE_TEMPLATE_UNIT} to ${SYSTEMD_DIR}"
+  install -m 0644 "$TEMPLATE_SRC" "$TEMPLATE_DST"
+  unit_changed=1
+else
+  echo "==> ${SERVICE_TEMPLATE_UNIT} already up to date"
+fi
 
 echo "==> Ensuring snapfs system user/group exists"
 if ! getent group "${SNAPFS_GROUP}" >/dev/null; then
@@ -278,7 +347,7 @@ if ! id "${SNAPFS_USER}" >/dev/null 2>&1; then
   echo " -> Creating user '${SNAPFS_USER}'"
   useradd --system \
     --gid "${SNAPFS_GROUP}" \
-    --home "${STATE_DIR}" \
+    --home "${BASE_STATE_DIR}" \
     --create-home \
     --shell /usr/sbin/nologin \
     "${SNAPFS_USER}"
@@ -286,49 +355,45 @@ fi
 
 echo "==> Creating config and state directories"
 install -d -m 0755 "${CONFIG_DIR}"
+install -d -m 0755 -o "${SNAPFS_USER}" -g "${SNAPFS_GROUP}" "${BASE_STATE_DIR}"
 install -d -m 0755 -o "${SNAPFS_USER}" -g "${SNAPFS_GROUP}" "${STATE_DIR}"
 
-echo "==> Installing ${SERVICE_UNIT} to ${SYSTEMD_DIR}"
-install -m 0644 "${SRC}" "${DST}"
-
-echo "==> Updating ExecStart in ${DST}"
-escaped_snapfs_bin="$(printf '%s\n' "${SNAPFS_BIN}" | sed 's/[\/&]/\\&/g')"
-sed -i "s/__SNAPFS_EXEC__/${escaped_snapfs_bin}/g" "${DST}"
-
-echo "==> Writing configuration to ${ENV_FILE}"
-cat > "${ENV_FILE}" <<EOF
-# SnapFS agent configuration
-# Edit this file later if the gateway, API key, or scan root changes,
-# then run: sudo systemctl restart ${SERVICE_UNIT%.service}
-SNAPFS_GATEWAY=${SNAPFS_GATEWAY}
-SNAPFS_AGENT_ID=${SNAPFS_AGENT_ID}
-SNAPFS_SCAN_ROOT=${SNAPFS_SCAN_ROOT}
-SNAPFS_API_KEY=${SNAPFS_API_KEY}
-EOF
-
-if [[ -n "${SNAPFS_SCANNER_TOKEN_SCOPES:-}" ]]; then
-  printf 'SNAPFS_SCANNER_TOKEN_SCOPES=%s\n' "${SNAPFS_SCANNER_TOKEN_SCOPES}" >> "${ENV_FILE}"
+if [[ ! -f "$ENV_FILE" ]] || ! cmp -s "$config_tmp" "$ENV_FILE"; then
+  echo "==> Writing configuration to ${ENV_FILE}"
+  install -m 0640 -o root -g "${SNAPFS_GROUP}" "$config_tmp" "$ENV_FILE"
+  config_changed=1
+else
+  echo "==> Configuration already matches ${ENV_FILE}"
 fi
-printf 'SNAPFS_ALLOW_INSECURE_GATEWAY=%s\n' "${SNAPFS_ALLOW_INSECURE_GATEWAY:-0}" >> "${ENV_FILE}"
-
-chown root:"${SNAPFS_GROUP}" "${ENV_FILE}"
-chmod 0640 "${ENV_FILE}"
+rm -f "$config_tmp"
 
 echo "==> Reloading systemd"
 systemctl daemon-reload
 
-echo "==> Enabling and restarting ${SERVICE_UNIT}"
-systemctl enable --now "${SERVICE_UNIT}"
-systemctl restart "${SERVICE_UNIT}"
+echo "==> Enabling ${SERVICE_UNIT}"
+systemctl enable "$SERVICE_UNIT"
+
+if [[ "$unit_changed" == "1" || "$config_changed" == "1" ]]; then
+  echo "==> Restarting ${SERVICE_UNIT}"
+  systemctl restart "$SERVICE_UNIT"
+else
+  echo "==> Starting ${SERVICE_UNIT} if needed"
+  systemctl start "$SERVICE_UNIT"
+fi
 
 echo
-echo "[OK] Installed and started ${SERVICE_UNIT}"
-echo "    Service unit : ${DST}"
+if [[ "$unit_changed" == "0" && "$config_changed" == "0" ]]; then
+  echo "[OK] ${SERVICE_UNIT} already matched the requested configuration"
+else
+  echo "[OK] Installed and started ${SERVICE_UNIT}"
+fi
+echo "    Template unit: ${TEMPLATE_DST}"
 echo "    Config file  : ${ENV_FILE}"
+echo "    State dir    : ${STATE_DIR}"
 echo "    SnapFS bin   : ${SNAPFS_BIN}"
 echo
-echo "To update the gateway, API key, or scan root later:"
+echo "To update this scanner later:"
 echo "  1. Edit ${ENV_FILE}"
-echo "  2. Run: sudo systemctl restart ${SERVICE_UNIT%.service}"
+echo "  2. Run: sudo systemctl restart ${SERVICE_UNIT}"
 echo
 systemctl --no-pager status "${SERVICE_UNIT}" || true

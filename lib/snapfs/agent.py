@@ -257,6 +257,9 @@ async def run_agent(
                     ws_url, heartbeat=30, headers=ws_headers
                 ) as ws:
                     attempt = 0
+                    heartbeat_interval = max(5, int(settings.ping_interval))
+                    last_pong_mono = time.monotonic()
+                    heartbeat_overdue_logged = False
 
                     await ws.send_json(
                         {
@@ -270,13 +273,32 @@ async def run_agent(
                             "max_concurrency": settings.scanner_max_concurrency,
                         }
                     )
+                    logger.info(
+                        "agent connected agent_id=%s ws=%s heartbeat_interval=%ss",
+                        agent_id_eff,
+                        ws_url,
+                        heartbeat_interval,
+                    )
 
                     async def pinger():
+                        nonlocal last_pong_mono, heartbeat_overdue_logged
                         while True:
-                            await asyncio.sleep(max(5, int(settings.ping_interval)))
-                            try:
-                                await ws.send_json({"type": "PING"})
-                            except Exception:
+                            await asyncio.sleep(heartbeat_interval)
+                            overdue_sec = time.monotonic() - last_pong_mono
+                            if overdue_sec > (heartbeat_interval * 2):
+                                if not heartbeat_overdue_logged:
+                                    logger.warning(
+                                        "heartbeat overdue agent_id=%s overdue_s=%.1f interval_s=%s",
+                                        agent_id_eff,
+                                        overdue_sec,
+                                        heartbeat_interval,
+                                    )
+                                    heartbeat_overdue_logged = True
+                            if not await _send(ws, {"type": "PING"}):
+                                logger.warning(
+                                    "heartbeat send failed; stopping pinger agent_id=%s",
+                                    agent_id_eff,
+                                )
                                 return
 
                     ping_task = asyncio.create_task(pinger())
@@ -294,6 +316,13 @@ async def run_agent(
 
                             t = data.get("type")
                             if t == "PONG":
+                                last_pong_mono = time.monotonic()
+                                if heartbeat_overdue_logged:
+                                    logger.info(
+                                        "heartbeat recovered agent_id=%s",
+                                        agent_id_eff,
+                                    )
+                                    heartbeat_overdue_logged = False
                                 continue
                             if t == "SCAN_TARGET":
                                 await _handle_scan(
