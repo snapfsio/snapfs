@@ -229,6 +229,7 @@ async def scan_dir(
     hashed = 0
     hash_errors = 0
     published = 0
+    bytes_published = 0
 
     start_event = {
         "type": "scan.started",
@@ -281,12 +282,14 @@ async def scan_dir(
                 "cache_hits": cache_hits,
                 "hashed": hashed,
                 "published": published,
+                "bytes_published": bytes_published,
                 "hash_errors": hash_errors,
                 "walk_errors": walk_errors,
                 "permission_errors": permission_errors,
                 "authoritative_for_deletes": (walk_errors + permission_errors) == 0,
                 "elapsed_sec": round(elapsed, 3),
                 "files_per_sec": round(float(published) / elapsed, 3),
+                "bytes_per_sec": round(float(bytes_published) / elapsed, 3),
             },
         }
 
@@ -315,6 +318,7 @@ async def scan_dir(
             "started_at": started_at,
             "finished_at": float(time.time()),
             "files_seen": total,
+            "bytes_seen": bytes_published,
             "cache_hits": cache_hits,
             "hashed": hashed,
             "published": published,
@@ -473,6 +477,14 @@ async def scan_dir(
                     try:
                         await gateway.publish_events_async(events)
                         published += len(events)
+                        bytes_published += sum(
+                            int(
+                                ev.get("data", {}).get("fsize_du")
+                                or ev.get("data", {}).get("size")
+                                or 0
+                            )
+                            for ev in events
+                        )
                         events.clear()
                     except Exception as e:
                         if _is_auth_error(e):
@@ -485,6 +497,14 @@ async def scan_dir(
                 try:
                     await gateway.publish_events_async(events)
                     published += len(events)
+                    bytes_published += sum(
+                        int(
+                            ev.get("data", {}).get("fsize_du")
+                            or ev.get("data", {}).get("size")
+                            or 0
+                        )
+                        for ev in events
+                    )
                     events.clear()
                 except Exception as e:
                     if _is_auth_error(e):
@@ -498,6 +518,7 @@ async def scan_dir(
         await emit_scan_telemetry(status="completed", force_emit=True)
         summary = {
             "files": total,
+            "bytes": bytes_published,
             "cache_hits": cache_hits,
             "hashed": hashed,
             "published": published,
@@ -507,17 +528,46 @@ async def scan_dir(
         print(
             f"[scanner] done. files={total} "
             f"cache_hits={cache_hits} hashed={hashed} hash_errors={hash_errors} "
-            f"walk_errors={walk_errors} permission_errors={permission_errors} published={published}"
+            f"walk_errors={walk_errors} permission_errors={permission_errors} published={published} "
+            f"bytes_published={bytes_published}"
         )
         return summary
     except (KeyboardInterrupt, asyncio.CancelledError) as e:
-        await emit_scan_telemetry(status="canceled", force_emit=True)
-        await emit_terminal_event(
-            "scan.cancelled",
-            error_message=str(e) or "scan cancelled",
-        )
+        try:
+            await emit_scan_telemetry(status="canceled", force_emit=True)
+        except Exception as emit_err:
+            if verbose > 0:
+                print(
+                    f"[scanner] failed to publish canceled telemetry: {emit_err}",
+                    file=sys.stderr,
+                )
+        try:
+            await emit_terminal_event(
+                "scan.cancelled",
+                error_message=str(e) or "scan cancelled",
+            )
+        except Exception as emit_err:
+            if verbose > 0:
+                print(
+                    f"[scanner] failed to publish scan.cancelled: {emit_err}",
+                    file=sys.stderr,
+                )
         raise
     except Exception as e:
-        await emit_scan_telemetry(status="failed", force_emit=True)
-        await emit_terminal_event("scan.failed", error_message=str(e))
+        try:
+            await emit_scan_telemetry(status="failed", force_emit=True)
+        except Exception as emit_err:
+            if verbose > 0:
+                print(
+                    f"[scanner] failed to publish failed telemetry: {emit_err}",
+                    file=sys.stderr,
+                )
+        try:
+            await emit_terminal_event("scan.failed", error_message=str(e))
+        except Exception as emit_err:
+            if verbose > 0:
+                print(
+                    f"[scanner] failed to publish scan.failed: {emit_err}",
+                    file=sys.stderr,
+                )
         raise
