@@ -302,6 +302,18 @@ async def run_agent(
                                 return
 
                     ping_task = asyncio.create_task(pinger())
+                    scan_tasks: set = set()
+
+                    def _on_scan_task_done(task: asyncio.Task) -> None:
+                        scan_tasks.discard(task)
+                        with contextlib.suppress(asyncio.CancelledError):
+                            exc = task.exception()
+                            if exc is not None:
+                                logger.warning(
+                                    "background scan task failed agent_id=%s err=%r",
+                                    agent_id_eff,
+                                    exc,
+                                )
 
                     try:
                         async for msg in ws:
@@ -325,14 +337,18 @@ async def run_agent(
                                     heartbeat_overdue_logged = False
                                 continue
                             if t == "SCAN_TARGET":
-                                await _handle_scan(
-                                    msg=data,
-                                    client=client,
-                                    ws=ws,
-                                    default_root=scan_root_eff,
-                                    verbose=verbose,
-                                    lock=lock,
+                                task = asyncio.create_task(
+                                    _handle_scan(
+                                        msg=data,
+                                        client=client,
+                                        ws=ws,
+                                        default_root=scan_root_eff,
+                                        verbose=verbose,
+                                        lock=lock,
+                                    )
                                 )
+                                scan_tasks.add(task)
+                                task.add_done_callback(_on_scan_task_done)
                                 continue
 
                             if verbose:
@@ -341,6 +357,11 @@ async def run_agent(
                         ping_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError, Exception):
                             await ping_task
+                        for task in list(scan_tasks):
+                            task.cancel()
+                        for task in list(scan_tasks):
+                            with contextlib.suppress(asyncio.CancelledError, Exception):
+                                await task
 
         except KeyboardInterrupt:
             raise

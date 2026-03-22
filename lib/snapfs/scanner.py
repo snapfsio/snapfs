@@ -70,6 +70,23 @@ def _is_auth_error(exc: Exception) -> bool:
     return "unauthorized" in msg or "forbidden" in msg
 
 
+def _scan_error_category(exc: BaseException) -> str:
+    """Return a coarse scan error category for operator reporting."""
+    if isinstance(exc, PermissionError):
+        return "permission"
+    if isinstance(exc, FileNotFoundError):
+        return "not_found"
+    if isinstance(exc, IsADirectoryError):
+        return "is_directory"
+    if isinstance(exc, NotADirectoryError):
+        return "not_directory"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, OSError):
+        return "os_error"
+    return "runtime"
+
+
 def _lookup_owner_group(st: os.stat_result) -> Tuple[Any, Any]:
     """
     Best-effort lookup of owner and group names.
@@ -230,6 +247,7 @@ async def scan_dir(
     hash_errors = 0
     published = 0
     bytes_published = 0
+    pending_scan_errors: List[Dict[str, Any]] = []
 
     start_event = {
         "type": "scan.started",
@@ -306,6 +324,49 @@ async def scan_dir(
             if verbose > 0:
                 print(f"[scanner] telemetry publish error: {e}", file=sys.stderr)
 
+    def queue_scan_error(
+        *, stage: str, path: Optional[str], exc: BaseException
+    ) -> None:
+        pending_scan_errors.append(
+            {
+                "type": "scan.error",
+                "data": {
+                    "root_path": root,
+                    "scan_id": scan_id,
+                    "hostname": hostname,
+                    "user": user,
+                    "pid": pid,
+                    "started_at": started_at,
+                    "trigger_type": trigger_type,
+                    "schedule_id": schedule_id,
+                    "observed_at": float(time.time()),
+                    "stage": stage,
+                    "path": str(path or root),
+                    "category": _scan_error_category(exc),
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                    "errno": getattr(exc, "errno", None),
+                },
+            }
+        )
+
+    async def flush_scan_errors() -> None:
+        nonlocal pending_scan_errors
+        if not pending_scan_errors:
+            return
+        batch = pending_scan_errors
+        pending_scan_errors = []
+        try:
+            await gateway.publish_events_async(batch, subject=settings.events_subject)
+        except Exception as e:
+            if _is_auth_error(e):
+                raise RuntimeError(
+                    "Gateway authentication failed while publishing scan.error"
+                ) from e
+            if verbose > 0:
+                print(f"[scanner] scan.error publish error: {e}", file=sys.stderr)
+            pending_scan_errors = batch + pending_scan_errors
+
     async def emit_terminal_event(
         event_type: str, *, error_message: Optional[str] = None
     ) -> None:
@@ -352,8 +413,10 @@ async def scan_dir(
         walk_errors += 1
         if isinstance(err, PermissionError):
             permission_errors += 1
+        err_path = getattr(err, "filename", root) or root
+        queue_scan_error(stage="walk", path=str(err_path), exc=err)
         print(
-            f"[scanner] walk error: {getattr(err, 'filename', root)}: {err}",
+            f"[scanner] walk error: {err_path}: {err}",
             file=sys.stderr,
         )
 
@@ -403,8 +466,10 @@ async def scan_dir(
                     continue
                 except PermissionError as e:
                     permission_errors += 1
+                    queue_scan_error(stage="stat", path=p, exc=e)
                     print(f"[scanner] stat permission error: {p}: {e}", file=sys.stderr)
                 except Exception as e:
+                    queue_scan_error(stage="stat", path=p, exc=e)
                     print(f"[scanner] stat error: {p}: {e}", file=sys.stderr)
 
             if not probes:
@@ -417,6 +482,7 @@ async def scan_dir(
                     raise RuntimeError(
                         "Gateway authentication failed during cache probe"
                     ) from e
+                queue_scan_error(stage="cache_probe", path=root, exc=e)
                 print(f"[scanner] cache probe error: {e} (treating as MISS)")
                 results = [{"status": "MISS"} for _ in probes]
 
@@ -456,6 +522,7 @@ async def scan_dir(
                         if verbose > 0:
                             print(f"hash:  {path} {algo}:{h}")
                     except Exception as e:
+                        queue_scan_error(stage="hash", path=path, exc=e)
                         print(f"[scanner] hash error: {path}: {e}", file=sys.stderr)
                         hash_errors += 1
                         algo = None
@@ -513,8 +580,10 @@ async def scan_dir(
                         ) from e
                     print(f"[scanner] publish error: {e}", file=sys.stderr)
 
+            await flush_scan_errors()
             await emit_scan_telemetry(status="running")
 
+        await flush_scan_errors()
         await emit_scan_telemetry(status="completed", force_emit=True)
         summary = {
             "files": total,
@@ -533,6 +602,14 @@ async def scan_dir(
         )
         return summary
     except (KeyboardInterrupt, asyncio.CancelledError) as e:
+        try:
+            await flush_scan_errors()
+        except Exception as emit_err:
+            if verbose > 0:
+                print(
+                    f"[scanner] failed to publish queued scan errors: {emit_err}",
+                    file=sys.stderr,
+                )
         try:
             await emit_scan_telemetry(status="canceled", force_emit=True)
         except Exception as emit_err:
@@ -554,6 +631,14 @@ async def scan_dir(
                 )
         raise
     except Exception as e:
+        try:
+            await flush_scan_errors()
+        except Exception as emit_err:
+            if verbose > 0:
+                print(
+                    f"[scanner] failed to publish queued scan errors: {emit_err}",
+                    file=sys.stderr,
+                )
         try:
             await emit_scan_telemetry(status="failed", force_emit=True)
         except Exception as emit_err:
