@@ -9,7 +9,7 @@ User=snapfs
 Group=snapfs
 EnvironmentFile=-/etc/snapfs/agent-%i.env
 WorkingDirectory=/var/lib/snapfs/%i
-ExecStart=/bin/sh -lc 'exec "$SNAPFS_BIN" agent'
+ExecStart=/bin/sh -lc 'set -- "$SNAPFS_BIN" agent; level="${SNAPFS_AGENT_VERBOSE:-1}"; case "$level" in ""|0|false|False|no|No) ;; *) count="$level"; if ! [ "$count" -eq "$count" ] 2>/dev/null; then count=1; fi; i=0; while [ "$i" -lt "$count" ]; do set -- "$@" -v; i=$((i+1)); done ;; esac; exec "$@"'
 Restart=always
 RestartSec=3
 StandardOutput=journal

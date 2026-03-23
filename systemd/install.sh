@@ -22,6 +22,8 @@ DEFAULT_SCAN_ROOT="${SNAPFS_SCAN_ROOT:-/data}"
 DEFAULT_API_KEY="${SNAPFS_API_KEY:-}"
 DEFAULT_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES:-ingest:write}"
 DEFAULT_ALLOW_INSECURE="${SNAPFS_ALLOW_INSECURE_GATEWAY:-0}"
+DEFAULT_AGENT_VERBOSE="${SNAPFS_AGENT_VERBOSE:-1}"
+DEFAULT_SUPPLEMENTARY_GROUPS="${SNAPFS_SUPPLEMENTARY_GROUPS:-}"
 
 TTY_PATH=""
 if [[ -r /dev/tty && -w /dev/tty ]]; then
@@ -177,6 +179,8 @@ load_existing_defaults() {
     DEFAULT_API_KEY="${SNAPFS_API_KEY:-$DEFAULT_API_KEY}"
     DEFAULT_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES:-$DEFAULT_SCOPES}"
     DEFAULT_ALLOW_INSECURE="${SNAPFS_ALLOW_INSECURE_GATEWAY:-$DEFAULT_ALLOW_INSECURE}"
+    DEFAULT_AGENT_VERBOSE="${SNAPFS_AGENT_VERBOSE:-$DEFAULT_AGENT_VERBOSE}"
+    DEFAULT_SUPPLEMENTARY_GROUPS="${SNAPFS_SUPPLEMENTARY_GROUPS:-$DEFAULT_SUPPLEMENTARY_GROUPS}"
     if [[ -n "${SNAPFS_AGENT_ID:-}" ]]; then
       DEFAULT_SCANNER_NAME="${SNAPFS_AGENT_ID}"
     fi
@@ -196,6 +200,40 @@ instance_state_dir() {
 instance_service_unit() {
   local scanner_name="$1"
   printf 'snapfs-agent@%s.service' "$scanner_name"
+}
+
+instance_override_dir() {
+  local scanner_name="$1"
+  printf '%s/%s.d' "$SYSTEMD_DIR" "$(instance_service_unit "$scanner_name")"
+}
+
+instance_override_file() {
+  local scanner_name="$1"
+  printf '%s/override.conf' "$(instance_override_dir "$scanner_name")"
+}
+
+normalize_supplementary_groups() {
+  local raw="$1"
+  raw="${raw//,/ }"
+  printf '%s' "$raw" | xargs
+}
+
+validate_supplementary_groups() {
+  local raw="$1"
+  local normalized
+  local group
+
+  normalized="$(normalize_supplementary_groups "$raw")"
+  if [[ -z "$normalized" ]]; then
+    return 0
+  fi
+
+  for group in $normalized; do
+    if ! getent group "$group" >/dev/null; then
+      echo "[ERR] Supplementary group does not exist: $group" >&2
+      exit 1
+    fi
+  done
 }
 
 if [[ ! -f "${TEMPLATE_SRC}" ]]; then
@@ -251,6 +289,8 @@ if [[ "$AS_ROOT" == "0" ]]; then
 
   SNAPFS_SCANNER_TOKEN_SCOPES_VALUE="$(trim "$(prompt_value 'Scanner token scopes' "$DEFAULT_SCOPES")")"
   SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE="$(trim "$(prompt_value 'Allow insecure HTTP for remote gateways? (0/1)' "$DEFAULT_ALLOW_INSECURE")")"
+  SNAPFS_AGENT_VERBOSE_VALUE="$(trim "$(prompt_value 'Agent log verbosity (0-2)' "$DEFAULT_AGENT_VERBOSE")")"
+  SNAPFS_SUPPLEMENTARY_GROUPS_VALUE="$(normalize_supplementary_groups "$(prompt_value 'Supplementary groups (optional)' "$DEFAULT_SUPPLEMENTARY_GROUPS")")"
 
   if [[ "$SNAPFS_GATEWAY_VALUE" =~ ^http:// ]]; then
     gateway_host="${SNAPFS_GATEWAY_VALUE#http://}"
@@ -276,6 +316,8 @@ if [[ "$AS_ROOT" == "0" ]]; then
   echo "  env file   : ${ENV_FILE}"
   echo "  state dir  : ${STATE_DIR}"
   echo "  service    : ${SERVICE_UNIT}"
+  echo "  verbosity  : ${SNAPFS_AGENT_VERBOSE_VALUE}"
+  echo "  extra groups: ${SNAPFS_SUPPLEMENTARY_GROUPS_VALUE:-—}"
   echo
 
   confirm_yes "Proceed with systemd installation using sudo?" "Y" || exit 0
@@ -288,6 +330,8 @@ if [[ "$AS_ROOT" == "0" ]]; then
     SNAPFS_API_KEY="${SNAPFS_API_KEY_VALUE}" \
     SNAPFS_SCANNER_TOKEN_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES_VALUE}" \
     SNAPFS_ALLOW_INSECURE_GATEWAY="${SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE}" \
+    SNAPFS_AGENT_VERBOSE="${SNAPFS_AGENT_VERBOSE_VALUE}" \
+    SNAPFS_SUPPLEMENTARY_GROUPS="${SNAPFS_SUPPLEMENTARY_GROUPS_VALUE}" \
     SNAPFS_SCANNER_NAME="${SCANNER_NAME_VALUE}" \
     SNAPFS_USER="${SNAPFS_USER}" \
     SNAPFS_GROUP="${SNAPFS_GROUP}" \
@@ -308,6 +352,8 @@ validate_scanner_name "${SNAPFS_SCANNER_NAME}"
 SERVICE_UNIT="$(instance_service_unit "$SNAPFS_SCANNER_NAME")"
 ENV_FILE="$(instance_env_file "$SNAPFS_SCANNER_NAME")"
 STATE_DIR="$(instance_state_dir "$SNAPFS_SCANNER_NAME")"
+OVERRIDE_DIR="$(instance_override_dir "$SNAPFS_SCANNER_NAME")"
+OVERRIDE_FILE="$(instance_override_file "$SNAPFS_SCANNER_NAME")"
 
 config_tmp="$(mktemp)"
 cat > "$config_tmp" <<CFG
@@ -319,6 +365,8 @@ SNAPFS_GATEWAY=${SNAPFS_GATEWAY}
 SNAPFS_AGENT_ID=${SNAPFS_AGENT_ID}
 SNAPFS_SCAN_ROOT=${SNAPFS_SCAN_ROOT}
 SNAPFS_API_KEY=${SNAPFS_API_KEY}
+SNAPFS_AGENT_VERBOSE=${SNAPFS_AGENT_VERBOSE:-1}
+SNAPFS_SUPPLEMENTARY_GROUPS=${SNAPFS_SUPPLEMENTARY_GROUPS:-}
 CFG
 
 if [[ -n "${SNAPFS_SCANNER_TOKEN_SCOPES:-}" ]]; then
@@ -328,6 +376,7 @@ printf 'SNAPFS_ALLOW_INSECURE_GATEWAY=%s\n' "${SNAPFS_ALLOW_INSECURE_GATEWAY:-0}
 
 unit_changed=0
 config_changed=0
+override_changed=0
 
 if [[ ! -f "$TEMPLATE_DST" ]] || ! cmp -s "$TEMPLATE_SRC" "$TEMPLATE_DST"; then
   echo "==> Installing ${SERVICE_TEMPLATE_UNIT} to ${SYSTEMD_DIR}"
@@ -342,6 +391,8 @@ if ! getent group "${SNAPFS_GROUP}" >/dev/null; then
   echo " -> Creating group '${SNAPFS_GROUP}'"
   groupadd --system "${SNAPFS_GROUP}"
 fi
+
+validate_supplementary_groups "${SNAPFS_SUPPLEMENTARY_GROUPS:-}"
 
 if ! id "${SNAPFS_USER}" >/dev/null 2>&1; then
   echo " -> Creating user '${SNAPFS_USER}'"
@@ -367,13 +418,39 @@ else
 fi
 rm -f "$config_tmp"
 
+override_tmp="$(mktemp)"
+if [[ -n "${SNAPFS_SUPPLEMENTARY_GROUPS:-}" ]]; then
+  cat > "$override_tmp" <<OVR
+[Service]
+SupplementaryGroups=${SNAPFS_SUPPLEMENTARY_GROUPS}
+OVR
+  install -d -m 0755 "$OVERRIDE_DIR"
+  if [[ ! -f "$OVERRIDE_FILE" ]] || ! cmp -s "$override_tmp" "$OVERRIDE_FILE"; then
+    echo "==> Writing service override to ${OVERRIDE_FILE}"
+    install -m 0644 "$override_tmp" "$OVERRIDE_FILE"
+    override_changed=1
+  else
+    echo "==> Service override already matches ${OVERRIDE_FILE}"
+  fi
+else
+  if [[ -f "$OVERRIDE_FILE" ]]; then
+    echo "==> Removing empty service override ${OVERRIDE_FILE}"
+    rm -f "$OVERRIDE_FILE"
+    override_changed=1
+  fi
+  if [[ -d "$OVERRIDE_DIR" ]] && [[ -z "$(find "$OVERRIDE_DIR" -maxdepth 1 -type f -print -quit)" ]]; then
+    rmdir "$OVERRIDE_DIR" || true
+  fi
+fi
+rm -f "$override_tmp"
+
 echo "==> Reloading systemd"
 systemctl daemon-reload
 
 echo "==> Enabling ${SERVICE_UNIT}"
 systemctl enable "$SERVICE_UNIT"
 
-if [[ "$unit_changed" == "1" || "$config_changed" == "1" ]]; then
+if [[ "$unit_changed" == "1" || "$config_changed" == "1" || "$override_changed" == "1" ]]; then
   echo "==> Restarting ${SERVICE_UNIT}"
   systemctl restart "$SERVICE_UNIT"
 else
@@ -382,7 +459,7 @@ else
 fi
 
 echo
-if [[ "$unit_changed" == "0" && "$config_changed" == "0" ]]; then
+if [[ "$unit_changed" == "0" && "$config_changed" == "0" && "$override_changed" == "0" ]]; then
   echo "[OK] ${SERVICE_UNIT} already matched the requested configuration"
 else
   echo "[OK] Installed and started ${SERVICE_UNIT}"
@@ -391,9 +468,20 @@ echo "    Template unit: ${TEMPLATE_DST}"
 echo "    Config file  : ${ENV_FILE}"
 echo "    State dir    : ${STATE_DIR}"
 echo "    SnapFS bin   : ${SNAPFS_BIN}"
+echo "    Verbosity    : ${SNAPFS_AGENT_VERBOSE:-1}"
+if [[ -n "${SNAPFS_SUPPLEMENTARY_GROUPS:-}" ]]; then
+  echo "    Extra groups : ${SNAPFS_SUPPLEMENTARY_GROUPS}"
+fi
 echo
 echo "To update this scanner later:"
 echo "  1. Edit ${ENV_FILE}"
 echo "  2. Run: sudo systemctl restart ${SERVICE_UNIT}"
+echo
+echo "Common service commands:"
+echo "  sudo systemctl start ${SERVICE_UNIT}"
+echo "  sudo systemctl stop ${SERVICE_UNIT}"
+echo "  sudo systemctl restart ${SERVICE_UNIT}"
+echo "  sudo systemctl status ${SERVICE_UNIT}"
+echo "  sudo journalctl -u ${SERVICE_UNIT} -f"
 echo
 systemctl --no-pager status "${SERVICE_UNIT}" || true

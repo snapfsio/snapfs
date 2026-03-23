@@ -234,6 +234,7 @@ async def run_agent(
 
     lock = asyncio.Lock()
     attempt = 0
+    scan_tasks: set = set()
 
     while True:
         try:
@@ -271,6 +272,7 @@ async def run_agent(
                             "root_path": scan_root_eff or settings.scanner_root or None,
                             "scanner_type": settings.scanner_type,
                             "max_concurrency": settings.scanner_max_concurrency,
+                            "busy": lock.locked() or bool(scan_tasks),
                         }
                     )
                     logger.info(
@@ -302,7 +304,6 @@ async def run_agent(
                                 return
 
                     ping_task = asyncio.create_task(pinger())
-                    scan_tasks: set = set()
 
                     def _on_scan_task_done(task: asyncio.Task) -> None:
                         scan_tasks.discard(task)
@@ -357,11 +358,6 @@ async def run_agent(
                         ping_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError, Exception):
                             await ping_task
-                        for task in list(scan_tasks):
-                            task.cancel()
-                        for task in list(scan_tasks):
-                            with contextlib.suppress(asyncio.CancelledError, Exception):
-                                await task
 
         except KeyboardInterrupt:
             raise
