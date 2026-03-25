@@ -17,6 +17,7 @@
 import asyncio
 import contextlib
 import logging
+import inspect
 import os
 import random
 import time
@@ -112,7 +113,7 @@ async def _handle_scan(
     default_root: str,
     verbose: int,
     lock: asyncio.Lock,
-    active_scans: Dict[str, ActiveScan],
+    active_scans: Optional[Dict[str, ActiveScan]] = None,
 ) -> None:
     """Handle SCAN_TARGET command.
 
@@ -123,6 +124,9 @@ async def _handle_scan(
     :param verbose: Verbosity level.
     :param lock: Asyncio lock to prevent concurrent scans.
     """
+    if active_scans is None:
+        active_scans = {}
+
     command_id = str(msg.get("command_id") or "")
     target = msg.get("target") or {}
     options = msg.get("options") or {}
@@ -189,14 +193,19 @@ async def _handle_scan(
                     schedule_id,
                 )
 
+            scan_kwargs = {
+                "force": force,
+                "verbose": verbose,
+                "trigger_type": trigger_type,
+                "schedule_id": schedule_id,
+            }
+            if "scan_id" in inspect.signature(scanner.scan_dir).parameters:
+                scan_kwargs["scan_id"] = scan_id or command_id
+
             summary = await scanner.scan_dir(
                 root,
                 client,
-                force=force,
-                verbose=verbose,
-                trigger_type=trigger_type,
-                schedule_id=schedule_id,
-                scan_id=scan_id or command_id,
+                **scan_kwargs,
             )
 
             await _send(
@@ -204,7 +213,11 @@ async def _handle_scan(
                 {
                     "type": "SCAN_COMPLETE",
                     "command_id": command_id,
-                    "scan_id": scan_id or command_id,
+                    **(
+                        {"scan_id": scan_id}
+                        if scan_id and scan_id != command_id
+                        else {}
+                    ),
                     "root": root,
                     "took_s": round(time.time() - started, 3),
                     "summary": summary,
@@ -253,7 +266,11 @@ async def _handle_scan(
                 {
                     "type": "SCAN_CANCELLED",
                     "command_id": command_id,
-                    "scan_id": scan_id or command_id,
+                    **(
+                        {"scan_id": scan_id}
+                        if scan_id and scan_id != command_id
+                        else {}
+                    ),
                     "root": root,
                     "error": cancel_error,
                 },
@@ -266,7 +283,11 @@ async def _handle_scan(
                 {
                     "type": "SCAN_ERROR",
                     "command_id": command_id,
-                    "scan_id": scan_id or command_id,
+                    **(
+                        {"scan_id": scan_id}
+                        if scan_id and scan_id != command_id
+                        else {}
+                    ),
                     "root": root,
                     "error": str(e),
                 },
