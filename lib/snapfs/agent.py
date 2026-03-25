@@ -28,8 +28,19 @@ import aiohttp
 from . import scanner
 from .client import SnapFS
 from .config import settings
+from . import __version__
 
 logger = logging.getLogger(__name__)
+
+
+ActiveScan = Dict[str, Any]
+
+
+def _active_scan_ids(active_scans: Dict[str, ActiveScan]) -> List[str]:
+    return [
+        str(info.get("scan_id") or command_id)
+        for command_id, info in active_scans.items()
+    ]
 
 
 def _join_ws(base: str, path: str) -> str:
@@ -101,6 +112,7 @@ async def _handle_scan(
     default_root: str,
     verbose: int,
     lock: asyncio.Lock,
+    active_scans: Dict[str, ActiveScan],
 ) -> None:
     """Handle SCAN_TARGET command.
 
@@ -111,10 +123,11 @@ async def _handle_scan(
     :param verbose: Verbosity level.
     :param lock: Asyncio lock to prevent concurrent scans.
     """
-    command_id = msg.get("command_id")
+    command_id = str(msg.get("command_id") or "")
     target = msg.get("target") or {}
     options = msg.get("options") or {}
 
+    scan_id = str(target.get("scan_id") or command_id or "")
     root = target.get("root") or default_root
     force = bool(options.get("force", False))
     trigger_type = target.get("trigger_type") or "manual"
@@ -156,6 +169,15 @@ async def _handle_scan(
 
     async with lock:
         started = time.time()
+        active_scans[command_id] = {
+            "command_id": command_id,
+            "scan_id": scan_id or command_id,
+            "root": root,
+            "trigger_type": trigger_type,
+            "schedule_id": schedule_id,
+            "started_at": started,
+            "cancel_requested": False,
+        }
         try:
             if verbose:
                 logger.info(
@@ -174,6 +196,7 @@ async def _handle_scan(
                 verbose=verbose,
                 trigger_type=trigger_type,
                 schedule_id=schedule_id,
+                scan_id=scan_id or command_id,
             )
 
             await _send(
@@ -181,6 +204,7 @@ async def _handle_scan(
                 {
                     "type": "SCAN_COMPLETE",
                     "command_id": command_id,
+                    "scan_id": scan_id or command_id,
                     "root": root,
                     "took_s": round(time.time() - started, 3),
                     "summary": summary,
@@ -188,6 +212,53 @@ async def _handle_scan(
                     "schedule_id": schedule_id,
                 },
             )
+        except asyncio.CancelledError as e:
+            cancel_requested = bool(
+                active_scans.get(command_id, {}).get("cancel_requested")
+            )
+            cancel_error = (
+                "canceled by operator"
+                if cancel_requested
+                else (str(e).strip() or "scan interrupted")
+            )
+            logger.info(
+                "scan cancelled command_id=%s scan_id=%s root=%s cancel_requested=%s",
+                command_id,
+                scan_id or command_id,
+                root,
+                cancel_requested,
+            )
+            if cancel_requested:
+                with contextlib.suppress(Exception):
+                    await client.gateway.publish_events_async(
+                        [
+                            {
+                                "type": "scan.cancelled",
+                                "data": {
+                                    "root_path": root,
+                                    "scan_id": scan_id or command_id,
+                                    "started_at": active_scans.get(command_id, {}).get(
+                                        "started_at"
+                                    ),
+                                    "finished_at": time.time(),
+                                    "trigger_type": trigger_type,
+                                    "schedule_id": schedule_id,
+                                    "error": cancel_error,
+                                },
+                            }
+                        ]
+                    )
+            await _send(
+                ws,
+                {
+                    "type": "SCAN_CANCELLED",
+                    "command_id": command_id,
+                    "scan_id": scan_id or command_id,
+                    "root": root,
+                    "error": cancel_error,
+                },
+            )
+            raise
         except Exception as e:
             logger.exception("scan failed command_id=%s root=%s", command_id, root)
             await _send(
@@ -195,10 +266,13 @@ async def _handle_scan(
                 {
                     "type": "SCAN_ERROR",
                     "command_id": command_id,
+                    "scan_id": scan_id or command_id,
                     "root": root,
                     "error": str(e),
                 },
             )
+        finally:
+            active_scans.pop(command_id, None)
 
 
 async def run_agent(
@@ -234,7 +308,8 @@ async def run_agent(
 
     lock = asyncio.Lock()
     attempt = 0
-    scan_tasks: set = set()
+    active_scans: Dict[str, ActiveScan] = {}
+    scan_tasks: Dict[str, asyncio.Task] = {}
 
     while True:
         try:
@@ -267,12 +342,13 @@ async def run_agent(
                             "type": "AGENT_HELLO",
                             "agent_id": agent_id_eff,
                             "agent_type": "scanner",
-                            "version": "snapfs",
+                            "version": __version__,
                             "capabilities": ["scan.fs"],
                             "root_path": scan_root_eff or settings.scanner_root or None,
                             "scanner_type": settings.scanner_type,
                             "max_concurrency": settings.scanner_max_concurrency,
                             "busy": lock.locked() or bool(scan_tasks),
+                            "active_scan_ids": _active_scan_ids(active_scans),
                         }
                     )
                     logger.info(
@@ -305,8 +381,10 @@ async def run_agent(
 
                     ping_task = asyncio.create_task(pinger())
 
-                    def _on_scan_task_done(task: asyncio.Task) -> None:
-                        scan_tasks.discard(task)
+                    def _on_scan_task_done(
+                        command_key: str, task: asyncio.Task
+                    ) -> None:
+                        scan_tasks.pop(command_key, None)
                         with contextlib.suppress(asyncio.CancelledError):
                             exc = task.exception()
                             if exc is not None:
@@ -338,6 +416,7 @@ async def run_agent(
                                     heartbeat_overdue_logged = False
                                 continue
                             if t == "SCAN_TARGET":
+                                command_key = str(data.get("command_id") or "")
                                 task = asyncio.create_task(
                                     _handle_scan(
                                         msg=data,
@@ -346,10 +425,55 @@ async def run_agent(
                                         default_root=scan_root_eff,
                                         verbose=verbose,
                                         lock=lock,
+                                        active_scans=active_scans,
                                     )
                                 )
-                                scan_tasks.add(task)
-                                task.add_done_callback(_on_scan_task_done)
+                                scan_tasks[command_key] = task
+                                task.add_done_callback(
+                                    lambda done, key=command_key: _on_scan_task_done(
+                                        key, done
+                                    )
+                                )
+                                continue
+                            if t == "SCAN_CANCEL":
+                                cancel_scan_id = str(data.get("scan_id") or "")
+                                cancel_command_id = str(data.get("command_id") or "")
+                                reason = str(
+                                    data.get("reason") or "canceled by operator"
+                                )
+                                target_command_id = None
+                                if (
+                                    cancel_command_id
+                                    and cancel_command_id in scan_tasks
+                                ):
+                                    target_command_id = cancel_command_id
+                                elif cancel_scan_id:
+                                    for command_key, info in active_scans.items():
+                                        if (
+                                            str(info.get("scan_id") or command_key)
+                                            == cancel_scan_id
+                                        ):
+                                            target_command_id = command_key
+                                            break
+                                if (
+                                    target_command_id
+                                    and target_command_id in scan_tasks
+                                ):
+                                    if target_command_id in active_scans:
+                                        active_scans[target_command_id][
+                                            "cancel_requested"
+                                        ] = True
+                                    scan_tasks[target_command_id].cancel()
+                                else:
+                                    await _send(
+                                        ws,
+                                        {
+                                            "type": "SCAN_ERROR",
+                                            "command_id": cancel_command_id or None,
+                                            "scan_id": cancel_scan_id or None,
+                                            "error": "No active scan matched cancel request.",
+                                        },
+                                    )
                                 continue
 
                             if verbose:

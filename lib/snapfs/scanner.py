@@ -206,6 +206,7 @@ async def scan_dir(
     verbose: int = 0,
     trigger_type: str = "manual",
     schedule_id: Optional[str] = None,
+    scan_id: Optional[str] = None,
 ) -> Dict[str, int]:
     """
     Scan a directory tree and publish file.upsert events via the given gateway.
@@ -224,6 +225,7 @@ async def scan_dir(
     :param verbose: Verbosity level (0=quiet, 1=info)
     :param trigger_type: Scan trigger source (manual/schedule/api).
     :param schedule_id: Optional schedule id when trigger_type is schedule.
+    :param scan_id: Optional externally assigned scan id.
     :return: Summary dict.
     """
     root = os.path.abspath(root)
@@ -231,7 +233,7 @@ async def scan_dir(
         raise NotADirectoryError(root)
 
     gateway = client.gateway
-    scan_id = str(uuid.uuid4())
+    scan_id = str(scan_id or uuid.uuid4())
     hostname = socket.gethostname()
     user = getpass.getuser()
     pid = os.getpid()
@@ -602,6 +604,11 @@ async def scan_dir(
         )
         return summary
     except (KeyboardInterrupt, asyncio.CancelledError) as e:
+        cancel_message = str(e).strip() or "scan interrupted"
+        lower_cancel_message = cancel_message.lower()
+        explicit_cancel = (
+            "operator" in lower_cancel_message and "cancel" in lower_cancel_message
+        ) or "cancel requested" in lower_cancel_message
         try:
             await flush_scan_errors()
         except Exception as emit_err:
@@ -611,22 +618,25 @@ async def scan_dir(
                     file=sys.stderr,
                 )
         try:
-            await emit_scan_telemetry(status="canceled", force_emit=True)
-        except Exception as emit_err:
-            if verbose > 0:
-                print(
-                    f"[scanner] failed to publish canceled telemetry: {emit_err}",
-                    file=sys.stderr,
-                )
-        try:
-            await emit_terminal_event(
-                "scan.cancelled",
-                error_message=str(e) or "scan cancelled",
+            await emit_scan_telemetry(
+                status="canceled" if explicit_cancel else "failed",
+                force_emit=True,
             )
         except Exception as emit_err:
             if verbose > 0:
                 print(
-                    f"[scanner] failed to publish scan.cancelled: {emit_err}",
+                    f"[scanner] failed to publish {'canceled' if explicit_cancel else 'failed'} telemetry: {emit_err}",
+                    file=sys.stderr,
+                )
+        try:
+            await emit_terminal_event(
+                "scan.cancelled" if explicit_cancel else "scan.failed",
+                error_message=cancel_message,
+            )
+        except Exception as emit_err:
+            if verbose > 0:
+                print(
+                    f"[scanner] failed to publish {'scan.cancelled' if explicit_cancel else 'scan.failed'}: {emit_err}",
                     file=sys.stderr,
                 )
         raise
