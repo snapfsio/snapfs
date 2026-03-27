@@ -35,10 +35,13 @@ For Linux hosts that should run the SnapFS scanner agent as a service:
 ```bash
 git clone https://github.com/snapfsio/snapfs
 cd snapfs
-sudo ./systemd/install.sh
+pip install .
+./systemd/install.sh
 ```
 
-The installer sets up the SnapFS system user, installs the service unit, reloads systemd, and starts the agent.
+The installer expects the `snapfs` CLI to already be installed and available in `PATH`. Run the installer as your normal user; it will prompt for elevated privileges when it reaches the root-only systemd setup steps.
+
+For production service installs, prefer installing `snapfs` into a stable system-level Python environment rather than a user-local virtualenv.
 
 Current systemd installer support is Linux-only. Windows service support is planned but not available yet.
 
