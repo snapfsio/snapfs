@@ -28,6 +28,20 @@ or install from source:
 pip install -e .
 ```
 
+## Install The Systemd Agent
+
+For Linux hosts that should run the SnapFS scanner agent as a service:
+
+```bash
+git clone https://github.com/snapfsio/snapfs
+cd snapfs
+sudo ./systemd/install.sh
+```
+
+The installer sets up the SnapFS system user, installs the service unit, reloads systemd, and starts the agent.
+
+Current systemd installer support is Linux-only. Windows service support is planned but not available yet.
+
 ## Development
 
 Install developer dependencies:
