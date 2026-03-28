@@ -69,6 +69,16 @@ def _validate_hash_algorithm(
         raise click.BadParameter(str(e), ctx=ctx, param=param) from e
 
 
+def _positive_int_option(
+    ctx: click.Context, param: click.Parameter, value: Optional[int]
+) -> Optional[int]:
+    if value is None:
+        return value
+    if int(value) <= 0:
+        raise click.BadParameter("must be a positive integer", ctx=ctx, param=param)
+    return int(value)
+
+
 def gateway_options(func: F) -> F:
     """
     Decorator adding standard gateway options to a command.
@@ -173,12 +183,30 @@ def query(sql: str, gateway_url: str, token: Optional[str]) -> None:
         f"({', '.join(hashing.list_algorithms(include_unavailable=True))})."
     ),
 )
+@click.option(
+    "--workers",
+    default=settings.hash_workers,
+    show_default=True,
+    type=int,
+    callback=_positive_int_option,
+    help="Number of parallel hash worker processes to use.",
+)
+@click.option(
+    "--hash-chunk-size",
+    default=settings.hash_chunk_size,
+    show_default=True,
+    type=int,
+    callback=_positive_int_option,
+    help="Read buffer size in bytes for hashing file contents.",
+)
 @verbose_option
 @gateway_options
 def scan(
     path: str,
     force: bool,
     algo: str,
+    workers: int,
+    hash_chunk_size: int,
     verbose: int,
     gateway_url: str,
     token: Optional[str],
@@ -198,7 +226,15 @@ def scan(
 
     try:
         summary = asyncio.run(
-            scanner.scan_dir(path, client, force=force, verbose=verbose, algo=algo)
+            scanner.scan_dir(
+                path,
+                client,
+                force=force,
+                verbose=verbose,
+                algo=algo,
+                hash_workers=workers,
+                hash_chunk_size=hash_chunk_size,
+            )
         )
     except NotADirectoryError as e:
         raise click.ClickException(f"Not a directory: {path}") from e
@@ -236,12 +272,30 @@ def scan(
         f"({', '.join(hashing.list_algorithms(include_unavailable=True))})."
     ),
 )
+@click.option(
+    "--workers",
+    default=settings.hash_workers,
+    show_default=True,
+    type=int,
+    callback=_positive_int_option,
+    help="Number of parallel hash worker processes to use.",
+)
+@click.option(
+    "--hash-chunk-size",
+    default=settings.hash_chunk_size,
+    show_default=True,
+    type=int,
+    callback=_positive_int_option,
+    help="Read buffer size in bytes for hashing file contents.",
+)
 @verbose_option
 @gateway_options
 def agent(
     agent_id: Optional[str],
     scan_root: Optional[str],
     algo: str,
+    workers: int,
+    hash_chunk_size: int,
     verbose: int,
     gateway_url: str,
     token: Optional[str],
@@ -258,6 +312,8 @@ def agent(
     client = SnapFS(gateway_url=gateway_url, token=token)
     _auto_auth_scanner_client(client, token)
     settings.hash_algo = algo
+    settings.hash_workers = workers
+    settings.hash_chunk_size = hash_chunk_size
 
     asyncio.run(
         agent_mod.run_agent(

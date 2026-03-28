@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
 import getpass
 import os
 import socket
@@ -203,6 +204,8 @@ async def scan_dir(
     schedule_id: Optional[str] = None,
     scan_id: Optional[str] = None,
     algo: Optional[str] = None,
+    hash_workers: Optional[int] = None,
+    hash_chunk_size: Optional[int] = None,
 ) -> Dict[str, int]:
     """
     Scan a directory tree and publish file.upsert events via the given gateway.
@@ -223,6 +226,8 @@ async def scan_dir(
     :param schedule_id: Optional schedule id when trigger_type is schedule.
     :param scan_id: Optional externally assigned scan id.
     :param algo: Hash algorithm override (defaults to SNAPFS_HASH_ALGO or sha1).
+    :param hash_workers: Optional number of hash worker processes.
+    :param hash_chunk_size: Optional read chunk size in bytes for hashing.
     :return: Summary dict.
     """
     root = os.path.abspath(root)
@@ -237,6 +242,8 @@ async def scan_dir(
     started_at = float(time.time())
     trigger_type = _normalize_trigger_type(trigger_type)
     selected_algo = hashing.resolve_algorithm(algo or settings.hash_algo)
+    selected_hash_workers = max(1, int(hash_workers or settings.hash_workers))
+    selected_hash_chunk_size = max(1, int(hash_chunk_size or settings.hash_chunk_size))
 
     files: List[str] = []
     walk_errors = 0
@@ -260,6 +267,9 @@ async def scan_dir(
             "started_at": started_at,
             "trigger_type": trigger_type,
             "schedule_id": schedule_id,
+            "hash_algo": selected_algo,
+            "hash_workers": selected_hash_workers,
+            "hash_chunk_size": selected_hash_chunk_size,
         },
     }
     try:
@@ -296,6 +306,9 @@ async def scan_dir(
                 "trigger_type": trigger_type,
                 "schedule_id": schedule_id,
                 "status": status,
+                "hash_algo": selected_algo,
+                "hash_workers": selected_hash_workers,
+                "hash_chunk_size": selected_hash_chunk_size,
                 "files_total": total,
                 "cache_hits": cache_hits,
                 "hashed": hashed,
@@ -389,6 +402,9 @@ async def scan_dir(
             "authoritative_for_deletes": (walk_errors + permission_errors) == 0,
             "trigger_type": trigger_type,
             "schedule_id": schedule_id,
+            "hash_algo": selected_algo,
+            "hash_workers": selected_hash_workers,
+            "hash_chunk_size": selected_hash_chunk_size,
         }
         if error_message:
             payload["error"] = error_message
@@ -430,6 +446,12 @@ async def scan_dir(
     total = len(files)
     telemetry_interval_sec = max(0, int(settings.scan_telemetry_interval_sec))
     last_telemetry_at = time.monotonic()
+
+    hash_executor = (
+        ProcessPoolExecutor(max_workers=selected_hash_workers)
+        if selected_hash_workers > 1
+        else None
+    )
 
     try:
         await emit_scan_telemetry(status="running", force_emit=True)
@@ -486,8 +508,57 @@ async def scan_dir(
                 print(f"[scanner] cache probe error: {e} (treating as MISS)")
                 results = [{"status": "MISS"} for _ in probes]
 
-            events: List[Dict[str, Any]] = []
+            hash_results: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
+            hash_jobs: List[Tuple[int, str]] = []
+
             for idx, res in enumerate(results):
+                status = res.get("status")
+                cached_algo = res.get("algo")
+                cached_hash = res.get("hash")
+                path = probes[idx]["path"]
+
+                if (
+                    status == "HIT"
+                    and cached_hash
+                    and cached_algo == selected_algo
+                    and not force
+                ):
+                    cache_hits += 1
+                    if verbose > 1:
+                        print(f"cache: {path} {cached_algo}:{cached_hash}")
+                    hash_results[idx] = (cached_algo, cached_hash)
+                else:
+                    hash_jobs.append((idx, path))
+
+            if hash_jobs:
+                hash_outputs = await asyncio.gather(
+                    *(
+                        hashing.hash_file_async(
+                            path,
+                            selected_algo,
+                            chunk_size=selected_hash_chunk_size,
+                            executor=hash_executor,
+                        )
+                        for _, path in hash_jobs
+                    ),
+                    return_exceptions=True,
+                )
+                for (idx, path), output in zip(hash_jobs, hash_outputs):
+                    if isinstance(output, Exception):
+                        queue_scan_error(stage="hash", path=path, exc=output)
+                        print(
+                            f"[scanner] hash error: {path}: {output}", file=sys.stderr
+                        )
+                        hash_errors += 1
+                        hash_results[idx] = (None, None)
+                    else:
+                        hashed += 1
+                        if verbose > 0:
+                            print(f"hash:  {path} {selected_algo}:{output}")
+                        hash_results[idx] = (selected_algo, output)
+
+            events: List[Dict[str, Any]] = []
+            for idx, _res in enumerate(results):
                 path = probes[idx]["path"]
                 st = stats[idx]
 
@@ -504,34 +575,7 @@ async def scan_dir(
                     else:
                         du_inodes.add(inode_du_key)
 
-                status = res.get("status")
-                cached_algo = res.get("algo")
-                cached_hash = res.get("hash")
-
-                if (
-                    status == "HIT"
-                    and cached_hash
-                    and cached_algo == selected_algo
-                    and not force
-                ):
-                    cache_hits += 1
-                    if verbose > 1:
-                        print(f"cache: {path} {cached_algo}:{cached_hash}")
-                    algo = cached_algo
-                    h = cached_hash
-                else:
-                    try:
-                        algo = selected_algo
-                        h = await hashing.hash_file_async(path, algo)
-                        hashed += 1
-                        if verbose > 0:
-                            print(f"hash:  {path} {algo}:{h}")
-                    except Exception as e:
-                        queue_scan_error(stage="hash", path=path, exc=e)
-                        print(f"[scanner] hash error: {path}: {e}", file=sys.stderr)
-                        hash_errors += 1
-                        algo = None
-                        h = None
+                algo, h = hash_results.get(idx, (None, None))
 
                 events.append(
                     event_from_stat(
@@ -669,3 +713,6 @@ async def scan_dir(
                     file=sys.stderr,
                 )
         raise
+    finally:
+        if hash_executor is not None:
+            hash_executor.shutdown(wait=True, cancel_futures=True)

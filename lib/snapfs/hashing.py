@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
-__doc__ = """
-Contains hash algorithm registry and helpers for SnapFS.
-"""
+#
+# Copyright (c) 2025 SnapFS, LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import asyncio
 import hashlib
+from concurrent.futures import Executor
+from functools import partial
 from typing import Callable, Dict, List, Optional
 
 try:
@@ -115,17 +128,20 @@ def hash_file(
 
 
 async def hash_file_async(
-    path: str, algorithm: str, *, chunk_size: int = DEFAULT_CHUNK_SIZE
+    path: str,
+    algorithm: str,
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    executor: Optional[Executor] = None,
 ) -> str:
     """Async wrapper for hash_file to run in an executor.
 
     :param path: The path to the file to hash.
     :param algorithm: The name of the hash algorithm to use.
     :param chunk_size: The size of chunks to read from the file (default: 1 MiB).
+    :param executor: Optional executor used to perform hashing work.
     :return: The hexadecimal digest of the file hash.
     """
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None,
-        lambda: hash_file(path, algorithm, chunk_size=chunk_size),
-    )
+    func = partial(hash_file, path, algorithm, chunk_size=chunk_size)
+    return await loop.run_in_executor(executor, func)
