@@ -263,6 +263,51 @@ def test_scan_dir_supports_multi_worker_hashing(tmp_path, monkeypatch):
     assert all(event["data"]["hash"] for event in file_events)
 
 
+def test_scan_dir_hardlinks_only_count_disk_usage_once(tmp_path, monkeypatch):
+    """Hardlinked files should publish full size once and zero du size for duplicates."""
+    root = tmp_path / "root"
+    root.mkdir()
+    original = root / "original.bin"
+    original.write_bytes(b"snapfs-hardlink-test")
+    linked = root / "linked.bin"
+
+    try:
+        original.stat()
+        linked.hardlink_to(original)
+    except (AttributeError, NotImplementedError, OSError):
+        pytest.skip("hardlinks are not supported reliably on this platform/filesystem")
+
+    gateway = FakeGateway()
+    client = FakeClient(gateway)
+
+    monkeypatch.setattr(scanner.settings, "probe_batch", 10)
+    monkeypatch.setattr(scanner.settings, "publish_batch", 10)
+    monkeypatch.setattr(scanner.settings, "scan_telemetry_interval_sec", 0)
+
+    summary = asyncio.run(
+        scanner.scan_dir(
+            str(root),
+            client,
+            algo="sha256",
+            hash_workers=1,
+            hash_chunk_size=1024,
+        )
+    )
+
+    assert summary["files"] == 2
+    file_events = [
+        event["data"]
+        for batch in gateway.published_batches
+        for event in batch["events"]
+        if event.get("type") == "file.upsert"
+    ]
+    assert len(file_events) == 2
+    sizes = sorted(int(event["size"]) for event in file_events)
+    du_sizes = sorted(int(event["fsize_du"]) for event in file_events)
+    assert sizes[0] == sizes[1]
+    assert du_sizes == [0, sizes[0]]
+
+
 def test_scan_dir_publishes_cancelled_when_task_is_interrupted(tmp_path, monkeypatch):
     """scan_dir should publish a terminal cancel event when interrupted mid-walk."""
     root = tmp_path / "root"

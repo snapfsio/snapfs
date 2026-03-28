@@ -450,6 +450,123 @@ def test_agent_command_sets_hash_performance_settings(monkeypatch):
     assert cli_module.settings.hash_chunk_size == 2097152
 
 
+def test_scan_command_uses_settings_defaults_until_cli_overridden(
+    monkeypatch, tmp_path
+):
+    """Scan should use current settings defaults unless explicit CLI overrides are provided."""
+    runner = CliRunner()
+    calls = []
+
+    async def fake_scan_dir(
+        path,
+        client,
+        *,
+        force=False,
+        verbose=0,
+        trigger_type="manual",
+        schedule_id=None,
+        algo=None,
+        hash_workers=None,
+        hash_chunk_size=None,
+    ):
+        calls.append(
+            {
+                "algo": algo,
+                "hash_workers": hash_workers,
+                "hash_chunk_size": hash_chunk_size,
+            }
+        )
+        return {
+            "files": 0,
+            "cache_hits": 0,
+            "hashed": 0,
+            "published": 0,
+            "scan_id": "scan-0",
+        }
+
+    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
+    monkeypatch.setattr(cli_module.scanner, "scan_dir", fake_scan_dir)
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+    monkeypatch.setattr(cli_module.settings, "hash_algo", "sha256")
+    monkeypatch.setattr(cli_module.settings, "hash_workers", 3)
+    monkeypatch.setattr(cli_module.settings, "hash_chunk_size", 2097152)
+
+    path_arg = tmp_path / "root"
+    path_arg.mkdir()
+
+    default_result = runner.invoke(
+        cli_module.cli,
+        ["scan", str(path_arg), "--gateway", "https://tenant.snapfs.com"],
+    )
+    override_result = runner.invoke(
+        cli_module.cli,
+        [
+            "scan",
+            str(path_arg),
+            "--gateway",
+            "https://tenant.snapfs.com",
+            "--algo",
+            "sha1",
+            "--workers",
+            "5",
+            "--hash-chunk-size",
+            "4096",
+        ],
+    )
+
+    assert default_result.exit_code == 0, default_result.output
+    assert override_result.exit_code == 0, override_result.output
+    assert calls == [
+        {"algo": "sha256", "hash_workers": 3, "hash_chunk_size": 2097152},
+        {"algo": "sha1", "hash_workers": 5, "hash_chunk_size": 4096},
+    ]
+
+
+def test_agent_command_uses_settings_defaults_until_cli_overridden(monkeypatch):
+    """Agent should persist current settings defaults unless explicit CLI overrides are provided."""
+    runner = CliRunner()
+
+    async def fake_run_agent(*, client, agent_id=None, scan_root=None, verbose=0):
+        return None
+
+    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
+    monkeypatch.setattr(cli_module.agent_mod, "run_agent", fake_run_agent)
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+    monkeypatch.setattr(cli_module.settings, "hash_algo", "sha256")
+    monkeypatch.setattr(cli_module.settings, "hash_workers", 3)
+    monkeypatch.setattr(cli_module.settings, "hash_chunk_size", 2097152)
+
+    default_result = runner.invoke(
+        cli_module.cli,
+        ["agent", "--gateway", "https://tenant.snapfs.com"],
+    )
+
+    assert default_result.exit_code == 0, default_result.output
+    assert cli_module.settings.hash_algo == "sha256"
+    assert cli_module.settings.hash_workers == 3
+    assert cli_module.settings.hash_chunk_size == 2097152
+
+    override_result = runner.invoke(
+        cli_module.cli,
+        [
+            "agent",
+            "--gateway",
+            "https://tenant.snapfs.com",
+            "--algo",
+            "sha1",
+            "--workers",
+            "5",
+            "--hash-chunk-size",
+            "4096",
+        ],
+    )
+
+    assert override_result.exit_code == 0, override_result.output
+    assert cli_module.settings.hash_algo == "sha1"
+    assert cli_module.settings.hash_workers == 5
+    assert cli_module.settings.hash_chunk_size == 4096
+
+
 def test_run_cancellable_waits_for_cancel_cleanup():
     """Ctrl+C handling should let coroutine cancellation cleanup finish before exiting."""
     cleanup = {"started": False, "finished": False}
