@@ -2,6 +2,7 @@ __doc__ = """
 Unit tests for snapfs.scanner.
 """
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -210,3 +211,44 @@ def test_scan_dir_supports_multi_worker_hashing(tmp_path, monkeypatch):
     assert len(file_events) == 2
     assert {event["data"]["algo"] for event in file_events} == {"sha256"}
     assert all(event["data"]["hash"] for event in file_events)
+
+
+def test_scan_dir_publishes_cancelled_when_task_is_interrupted(tmp_path, monkeypatch):
+    """scan_dir should publish a terminal cancel event when interrupted mid-walk."""
+    root = tmp_path / "root"
+    root.mkdir()
+    for idx in range(1024):
+        (root / f"file-{idx}.txt").write_text("x")
+
+    gateway = FakeGateway()
+    client = FakeClient(gateway)
+
+    monkeypatch.setattr(scanner.settings, "probe_batch", 64)
+    monkeypatch.setattr(scanner.settings, "publish_batch", 64)
+    monkeypatch.setattr(scanner.settings, "scan_telemetry_interval_sec", 0)
+
+    async def run_case():
+        task = asyncio.create_task(
+            scanner.scan_dir(
+                str(root),
+                client,
+                algo="sha256",
+            )
+        )
+
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run_case())
+
+    event_types = [
+        event["type"]
+        for batch in gateway.published_batches
+        for event in batch["events"]
+    ]
+    assert "scan.started" in event_types
+    assert "scan.cancelled" in event_types

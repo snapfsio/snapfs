@@ -2,6 +2,7 @@ __doc__ = """
 Unit tests for snapfs.cli.
 """
 
+import asyncio
 import pytest
 
 import json
@@ -447,3 +448,90 @@ def test_agent_command_sets_hash_performance_settings(monkeypatch):
     assert cli_module.settings.hash_algo == "sha256"
     assert cli_module.settings.hash_workers == 4
     assert cli_module.settings.hash_chunk_size == 2097152
+
+
+def test_run_cancellable_waits_for_cancel_cleanup():
+    """Ctrl+C handling should let coroutine cancellation cleanup finish before exiting."""
+    cleanup = {"started": False, "finished": False}
+
+    async def job():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cleanup["started"] = True
+            await asyncio.sleep(0)
+            cleanup["finished"] = True
+            raise
+
+    original_new_event_loop = cli_module.asyncio.new_event_loop
+    original_all_tasks = cli_module.asyncio.all_tasks
+
+    class InterruptingLoop:
+        def __init__(self):
+            self._loop = original_new_event_loop()
+            self._calls = 0
+
+        def create_task(self, coro):
+            return self._loop.create_task(coro)
+
+        def run_until_complete(self, arg):
+            self._calls += 1
+            if self._calls == 1:
+                self._loop.call_soon(arg.cancel)
+                self._loop.run_until_complete(asyncio.sleep(0))
+                raise KeyboardInterrupt()
+            return self._loop.run_until_complete(arg)
+
+        def shutdown_asyncgens(self):
+            return self._loop.shutdown_asyncgens()
+
+        def close(self):
+            return self._loop.close()
+
+    holder = {}
+
+    def fake_new_event_loop():
+        wrapper = InterruptingLoop()
+        holder["wrapper"] = wrapper
+        return wrapper
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(cli_module.asyncio, "new_event_loop", fake_new_event_loop)
+    monkeypatch.setattr(cli_module.asyncio, "set_event_loop", lambda loop: None)
+    monkeypatch.setattr(
+        cli_module.asyncio,
+        "all_tasks",
+        lambda loop: original_all_tasks(holder["wrapper"]._loop),
+    )
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            cli_module._run_cancellable(job())
+    finally:
+        monkeypatch.undo()
+
+    assert cleanup == {"started": True, "finished": True}
+
+
+def test_scan_command_wraps_keyboard_interrupt(monkeypatch, tmp_path):
+    """The scan command should report a clean interruption instead of leaving a traceback."""
+    runner = CliRunner()
+
+    def fake_run_cancellable(_coro):
+        _coro.close()
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(cli_module, "_run_cancellable", fake_run_cancellable)
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
+
+    path = tmp_path / "root"
+    path.mkdir()
+
+    result = runner.invoke(
+        cli_module.cli,
+        ["scan", str(path), "--gateway", "https://tenant.snapfs.com"],
+    )
+
+    assert result.exit_code != 0
+    assert "Scan interrupted." in result.output
