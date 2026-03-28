@@ -83,6 +83,14 @@ def _scan_error_category(exc: BaseException) -> str:
     return "runtime"
 
 
+def _format_exc(exc: BaseException) -> str:
+    """Return a readable exception string even when str(exc) is empty."""
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"
+    return type(exc).__name__
+
+
 def _lookup_owner_group(st: os.stat_result) -> Tuple[Any, Any]:
     """
     Best-effort lookup of owner and group names.
@@ -255,6 +263,15 @@ async def scan_dir(
     published = 0
     bytes_published = 0
     pending_scan_errors: List[Dict[str, Any]] = []
+    current_phase = "walking"
+    files_discovered = 0
+    bytes_hashed = 0
+    bytes_processed = 0
+    hash_jobs_active = 0
+    bytes_hashing = 0
+    current_path: Optional[str] = root
+    current_size = 0
+    current_offset = 0
 
     start_event = {
         "type": "scan.started",
@@ -267,11 +284,23 @@ async def scan_dir(
             "started_at": started_at,
             "trigger_type": trigger_type,
             "schedule_id": schedule_id,
+            "phase": current_phase,
+            "files_discovered": files_discovered,
+            "bytes_hashed": bytes_hashed,
+            "bytes_processed": bytes_processed,
+            "hash_jobs_active": hash_jobs_active,
+            "bytes_hashing": bytes_hashing,
+            "current_path": current_path,
+            "current_size": current_size,
+            "current_offset": current_offset,
             "hash_algo": selected_algo,
             "hash_workers": selected_hash_workers,
             "hash_chunk_size": selected_hash_chunk_size,
         },
     }
+    telemetry_interval_sec = max(0, int(settings.scan_telemetry_interval_sec))
+    last_telemetry_at = time.monotonic()
+
     try:
         await gateway.publish_events_async([start_event])
         if verbose:
@@ -306,6 +335,15 @@ async def scan_dir(
                 "trigger_type": trigger_type,
                 "schedule_id": schedule_id,
                 "status": status,
+                "phase": current_phase,
+                "files_discovered": files_discovered,
+                "bytes_hashed": bytes_hashed,
+                "bytes_processed": bytes_processed,
+                "hash_jobs_active": hash_jobs_active,
+                "bytes_hashing": bytes_hashing,
+                "current_path": current_path,
+                "current_size": current_size,
+                "current_offset": current_offset,
                 "hash_algo": selected_algo,
                 "hash_workers": selected_hash_workers,
                 "hash_chunk_size": selected_hash_chunk_size,
@@ -319,8 +357,10 @@ async def scan_dir(
                 "permission_errors": permission_errors,
                 "authoritative_for_deletes": (walk_errors + permission_errors) == 0,
                 "elapsed_sec": round(elapsed, 3),
-                "files_per_sec": round(float(published) / elapsed, 3),
-                "bytes_per_sec": round(float(bytes_published) / elapsed, 3),
+                "files_per_sec": round(float(max(hashed, published)) / elapsed, 3),
+                "bytes_per_sec": round(
+                    float(max(bytes_processed, bytes_published)) / elapsed, 3
+                ),
             },
         }
 
@@ -335,7 +375,10 @@ async def scan_dir(
                     "Gateway authentication failed while publishing scan.telemetry"
                 ) from e
             if verbose > 0:
-                print(f"[scanner] telemetry publish error: {e}", file=sys.stderr)
+                print(
+                    f"[scanner] telemetry publish error: {_format_exc(e)}",
+                    file=sys.stderr,
+                )
 
     def queue_scan_error(
         *, stage: str, path: Optional[str], exc: BaseException
@@ -377,7 +420,10 @@ async def scan_dir(
                     "Gateway authentication failed while publishing scan.error"
                 ) from e
             if verbose > 0:
-                print(f"[scanner] scan.error publish error: {e}", file=sys.stderr)
+                print(
+                    f"[scanner] scan.error publish error: {_format_exc(e)}",
+                    file=sys.stderr,
+                )
             pending_scan_errors = batch + pending_scan_errors
 
     async def emit_terminal_event(
@@ -402,6 +448,15 @@ async def scan_dir(
             "authoritative_for_deletes": (walk_errors + permission_errors) == 0,
             "trigger_type": trigger_type,
             "schedule_id": schedule_id,
+            "phase": current_phase,
+            "files_discovered": files_discovered,
+            "bytes_hashed": bytes_hashed,
+            "bytes_processed": bytes_processed,
+            "hash_jobs_active": hash_jobs_active,
+            "bytes_hashing": bytes_hashing,
+            "current_path": current_path,
+            "current_size": current_size,
+            "current_offset": current_offset,
             "hash_algo": selected_algo,
             "hash_workers": selected_hash_workers,
             "hash_chunk_size": selected_hash_chunk_size,
@@ -422,7 +477,10 @@ async def scan_dir(
                 raise RuntimeError(
                     f"Gateway authentication failed while publishing {event_type}"
                 ) from e
-            print(f"[scanner] failed to publish {event_type}: {e}", file=sys.stderr)
+            print(
+                f"[scanner] failed to publish {event_type}: {_format_exc(e)}",
+                file=sys.stderr,
+            )
 
     def _on_walk_error(err: OSError) -> None:
         nonlocal walk_errors, permission_errors
@@ -436,24 +494,34 @@ async def scan_dir(
             file=sys.stderr,
         )
 
-    for dirpath, _, filenames in os.walk(root, onerror=_on_walk_error):
-        for name in filenames:
-            files.append(os.path.join(dirpath, name))
-
-    seen_inodes: set[Tuple[int, int, int, int]] = set()
-    du_inodes: set[Tuple[int, int]] = set()
-
-    total = len(files)
-    telemetry_interval_sec = max(0, int(settings.scan_telemetry_interval_sec))
-    last_telemetry_at = time.monotonic()
-
-    hash_executor = (
-        ProcessPoolExecutor(max_workers=selected_hash_workers)
-        if selected_hash_workers > 1
-        else None
-    )
-
+    hash_executor = None
     try:
+        walk_yield_every = max(1, min(int(settings.probe_batch or 1), 512))
+        for dirpath, _, filenames in os.walk(root, onerror=_on_walk_error):
+            current_path = dirpath
+            current_size = 0
+            await asyncio.sleep(0)
+            for idx, name in enumerate(filenames, start=1):
+                files.append(os.path.join(dirpath, name))
+                files_discovered += 1
+                if idx % walk_yield_every == 0:
+                    await emit_scan_telemetry(status="running")
+                    await asyncio.sleep(0)
+            if telemetry_interval_sec > 0 and files_discovered:
+                await emit_scan_telemetry(status="running")
+
+        current_phase = "hashing"
+        seen_inodes: set[Tuple[int, int, int, int]] = set()
+        du_inodes: set[Tuple[int, int]] = set()
+
+        total = len(files)
+
+        hash_executor = (
+            ProcessPoolExecutor(max_workers=selected_hash_workers)
+            if selected_hash_workers > 1
+            else None
+        )
+
         await emit_scan_telemetry(status="running", force_emit=True)
 
         for i in range(0, total, settings.probe_batch):
@@ -531,31 +599,138 @@ async def scan_dir(
                     hash_jobs.append((idx, path))
 
             if hash_jobs:
-                hash_outputs = await asyncio.gather(
-                    *(
-                        hashing.hash_file_async(
-                            path,
-                            selected_algo,
-                            chunk_size=selected_hash_chunk_size,
-                            executor=hash_executor,
+                if hash_executor is None:
+                    for idx, path in hash_jobs:
+                        size = int(probes[idx]["size"])
+                        current_path = path
+                        current_size = size
+                        current_offset = 0
+                        hash_jobs_active = 1
+                        bytes_hashing = size
+
+                        async def on_hash_progress(delta: int) -> None:
+                            nonlocal bytes_processed, current_offset
+                            bytes_processed += int(delta)
+                            current_offset += int(delta)
+                            await emit_scan_telemetry(status="running")
+
+                        try:
+                            output = await hashing.hash_file_async(
+                                path,
+                                selected_algo,
+                                chunk_size=selected_hash_chunk_size,
+                                progress_callback=on_hash_progress,
+                            )
+                        except Exception as output:
+                            queue_scan_error(stage="hash", path=path, exc=output)
+                            print(
+                                f"[scanner] hash error: {path}: {_format_exc(output)}",
+                                file=sys.stderr,
+                            )
+                            hash_errors += 1
+                            hash_results[idx] = (None, None)
+                        else:
+                            hashed += 1
+                            bytes_hashed += size
+                            if bytes_processed < bytes_hashed:
+                                bytes_processed = bytes_hashed
+                            if verbose > 0:
+                                print(f"hash:  {path} {selected_algo}:{output}")
+                            hash_results[idx] = (selected_algo, output)
+                        finally:
+                            hash_jobs_active = 0
+                            bytes_hashing = 0
+                            current_path = None
+                            current_size = 0
+                            current_offset = 0
+                else:
+                    hash_task_meta = {}
+                    for idx, path in hash_jobs:
+                        size = int(probes[idx]["size"])
+                        task = asyncio.create_task(
+                            hashing.hash_file_async(
+                                path,
+                                selected_algo,
+                                chunk_size=selected_hash_chunk_size,
+                                executor=hash_executor,
+                            )
                         )
-                        for _, path in hash_jobs
-                    ),
-                    return_exceptions=True,
-                )
-                for (idx, path), output in zip(hash_jobs, hash_outputs):
-                    if isinstance(output, Exception):
-                        queue_scan_error(stage="hash", path=path, exc=output)
-                        print(
-                            f"[scanner] hash error: {path}: {output}", file=sys.stderr
-                        )
-                        hash_errors += 1
-                        hash_results[idx] = (None, None)
+                        hash_task_meta[task] = {"idx": idx, "path": path, "size": size}
+
+                    hash_jobs_active = len(hash_task_meta)
+                    bytes_hashing = sum(
+                        int(meta["size"]) for meta in hash_task_meta.values()
+                    )
+                    current_offset = 0
+                    if hash_jobs_active == 1:
+                        meta = next(iter(hash_task_meta.values()))
+                        current_path = str(meta["path"])
+                        current_size = int(meta["size"])
                     else:
-                        hashed += 1
-                        if verbose > 0:
-                            print(f"hash:  {path} {selected_algo}:{output}")
-                        hash_results[idx] = (selected_algo, output)
+                        current_path = None
+                        current_size = bytes_hashing
+
+                    pending_hash_tasks = set(hash_task_meta.keys())
+                    while pending_hash_tasks:
+                        done, pending_hash_tasks = await asyncio.wait(
+                            pending_hash_tasks,
+                            timeout=0.5,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if not done:
+                            await emit_scan_telemetry(status="running")
+                            continue
+
+                        for task in done:
+                            meta = hash_task_meta.pop(task)
+                            idx = int(meta["idx"])
+                            path = str(meta["path"])
+                            size = int(meta["size"])
+                            try:
+                                output = task.result()
+                            except Exception as output:
+                                queue_scan_error(stage="hash", path=path, exc=output)
+                                print(
+                                    f"[scanner] hash error: {path}: {_format_exc(output)}",
+                                    file=sys.stderr,
+                                )
+                                hash_errors += 1
+                                hash_results[idx] = (None, None)
+                            else:
+                                hashed += 1
+                                bytes_hashed += size
+                                bytes_processed = max(bytes_processed, bytes_hashed)
+                                if verbose > 0:
+                                    print(f"hash:  {path} {selected_algo}:{output}")
+                                hash_results[idx] = (selected_algo, output)
+
+                        hash_jobs_active = len(hash_task_meta)
+                        bytes_hashing = sum(
+                            int(meta["size"]) for meta in hash_task_meta.values()
+                        )
+                        if hash_jobs_active == 1:
+                            meta = next(iter(hash_task_meta.values()))
+                            current_path = str(meta["path"])
+                            current_size = int(meta["size"])
+                        elif hash_jobs_active > 1:
+                            current_path = None
+                            current_size = bytes_hashing
+                        else:
+                            current_path = None
+                            current_size = 0
+                        current_offset = 0
+
+                    hash_jobs_active = 0
+                    bytes_hashing = 0
+                    current_path = None
+                    current_size = 0
+                    current_offset = 0
+            else:
+                hash_jobs_active = 0
+                bytes_hashing = 0
+                current_path = None
+                current_size = 0
+                current_offset = 0
 
             events: List[Dict[str, Any]] = []
             for idx, _res in enumerate(results):
@@ -591,6 +766,9 @@ async def scan_dir(
 
                 if len(events) >= settings.publish_batch:
                     try:
+                        current_phase = "publishing"
+                        current_path = path
+                        current_size = len(events)
                         await gateway.publish_events_async(events)
                         published += len(events)
                         bytes_published += sum(
@@ -602,6 +780,9 @@ async def scan_dir(
                             for ev in events
                         )
                         events.clear()
+                        current_phase = "hashing"
+                        current_path = None
+                        current_size = 0
                     except Exception as e:
                         if _is_auth_error(e):
                             raise RuntimeError(
@@ -611,6 +792,9 @@ async def scan_dir(
 
             if events:
                 try:
+                    current_phase = "publishing"
+                    current_path = events[-1].get("data", {}).get("path")
+                    current_size = len(events)
                     await gateway.publish_events_async(events)
                     published += len(events)
                     bytes_published += sum(
@@ -622,6 +806,9 @@ async def scan_dir(
                         for ev in events
                     )
                     events.clear()
+                    current_phase = "hashing"
+                    current_path = None
+                    current_size = 0
                 except Exception as e:
                     if _is_auth_error(e):
                         raise RuntimeError(
@@ -632,6 +819,9 @@ async def scan_dir(
             await flush_scan_errors()
             await emit_scan_telemetry(status="running")
 
+        current_phase = "completed"
+        current_path = None
+        current_size = 0
         await flush_scan_errors()
         await emit_scan_telemetry(status="completed", force_emit=True)
         summary = {
@@ -652,10 +842,6 @@ async def scan_dir(
         return summary
     except (KeyboardInterrupt, asyncio.CancelledError) as e:
         cancel_message = str(e).strip() or "scan interrupted"
-        lower_cancel_message = cancel_message.lower()
-        explicit_cancel = (
-            "operator" in lower_cancel_message and "cancel" in lower_cancel_message
-        ) or "cancel requested" in lower_cancel_message
         try:
             await flush_scan_errors()
         except Exception as emit_err:
@@ -664,26 +850,21 @@ async def scan_dir(
                     f"[scanner] failed to publish queued scan errors: {emit_err}",
                     file=sys.stderr,
                 )
+        current_phase = "canceled"
         try:
-            await emit_scan_telemetry(
-                status="canceled" if explicit_cancel else "failed",
-                force_emit=True,
-            )
+            await emit_scan_telemetry(status="canceled", force_emit=True)
         except Exception as emit_err:
             if verbose > 0:
                 print(
-                    f"[scanner] failed to publish {'canceled' if explicit_cancel else 'failed'} telemetry: {emit_err}",
+                    f"[scanner] failed to publish canceled telemetry: {emit_err}",
                     file=sys.stderr,
                 )
         try:
-            await emit_terminal_event(
-                "scan.cancelled" if explicit_cancel else "scan.failed",
-                error_message=cancel_message,
-            )
+            await emit_terminal_event("scan.cancelled", error_message=cancel_message)
         except Exception as emit_err:
             if verbose > 0:
                 print(
-                    f"[scanner] failed to publish {'scan.cancelled' if explicit_cancel else 'scan.failed'}: {emit_err}",
+                    f"[scanner] failed to publish scan.cancelled: {emit_err}",
                     file=sys.stderr,
                 )
         raise
@@ -696,6 +877,7 @@ async def scan_dir(
                     f"[scanner] failed to publish queued scan errors: {emit_err}",
                     file=sys.stderr,
                 )
+        current_phase = "failed"
         try:
             await emit_scan_telemetry(status="failed", force_emit=True)
         except Exception as emit_err:

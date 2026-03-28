@@ -15,8 +15,10 @@
 # limitations under the License.
 
 import asyncio
+import contextlib
 import click
 import json
+import signal
 from typing import Callable, List, Optional, TypeVar
 
 from snapfs import SnapFS, __prog__, __version__
@@ -56,6 +58,47 @@ def _auto_auth_scanner_client(client: SnapFS, explicit_token: Optional[str]) -> 
         )
     )
     client.gateway.token = token
+
+
+def _run_cancellable(coro):
+    """Run a coroutine and allow Ctrl+C cleanup to finish before the loop closes."""
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        task = loop.create_task(coro)
+        try:
+            return loop.run_until_complete(task)
+        except KeyboardInterrupt:
+            if not task.done():
+                task.cancel()
+                previous_handler = None
+                try:
+                    previous_handler = signal.getsignal(signal.SIGINT)
+                    signal.signal(signal.SIGINT, signal.SIG_IGN)
+                except (AttributeError, ValueError, RuntimeError):
+                    previous_handler = None
+                try:
+                    with contextlib.suppress(asyncio.CancelledError, KeyboardInterrupt):
+                        loop.run_until_complete(task)
+                finally:
+                    if previous_handler is not None:
+                        with contextlib.suppress(ValueError, RuntimeError):
+                            signal.signal(signal.SIGINT, previous_handler)
+            raise
+        finally:
+            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+            for pending_task in pending:
+                pending_task.cancel()
+            if pending:
+                with contextlib.suppress(Exception):
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            with contextlib.suppress(Exception):
+                loop.run_until_complete(loop.shutdown_asyncgens())
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 def _validate_hash_algorithm(
@@ -225,7 +268,7 @@ def scan(
     _auto_auth_scanner_client(client, token)
 
     try:
-        summary = asyncio.run(
+        summary = _run_cancellable(
             scanner.scan_dir(
                 path,
                 client,
@@ -236,6 +279,8 @@ def scan(
                 hash_chunk_size=hash_chunk_size,
             )
         )
+    except KeyboardInterrupt as e:
+        raise click.ClickException("Scan interrupted.") from e
     except NotADirectoryError as e:
         raise click.ClickException(f"Not a directory: {path}") from e
     except Exception as e:
