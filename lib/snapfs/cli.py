@@ -218,8 +218,7 @@ def query(sql: str, gateway_url: str, token: Optional[str]) -> None:
 )
 @click.option(
     "--algo",
-    default=settings.hash_algo,
-    show_default=True,
+    default=None,
     callback=_validate_hash_algorithm,
     help=(
         "Hash algorithm to use "
@@ -228,16 +227,14 @@ def query(sql: str, gateway_url: str, token: Optional[str]) -> None:
 )
 @click.option(
     "--workers",
-    default=settings.hash_workers,
-    show_default=True,
+    default=None,
     type=int,
     callback=_positive_int_option,
     help="Number of parallel hash worker processes to use.",
 )
 @click.option(
     "--hash-chunk-size",
-    default=settings.hash_chunk_size,
-    show_default=True,
+    default=None,
     type=int,
     callback=_positive_int_option,
     help="Read buffer size in bytes for hashing file contents.",
@@ -267,6 +264,10 @@ def scan(
     client = SnapFS(gateway_url=gateway_url, token=token)
     _auto_auth_scanner_client(client, token)
 
+    selected_algo = algo or settings.hash_algo
+    selected_workers = workers or settings.hash_workers
+    selected_hash_chunk_size = hash_chunk_size or settings.hash_chunk_size
+
     try:
         summary = _run_cancellable(
             scanner.scan_dir(
@@ -274,9 +275,9 @@ def scan(
                 client,
                 force=force,
                 verbose=verbose,
-                algo=algo,
-                hash_workers=workers,
-                hash_chunk_size=hash_chunk_size,
+                algo=selected_algo,
+                hash_workers=selected_workers,
+                hash_chunk_size=selected_hash_chunk_size,
             )
         )
     except KeyboardInterrupt as e:
@@ -309,8 +310,7 @@ def scan(
 )
 @click.option(
     "--algo",
-    default=settings.hash_algo,
-    show_default=True,
+    default=None,
     callback=_validate_hash_algorithm,
     help=(
         "Hash algorithm to use for agent scans "
@@ -319,16 +319,14 @@ def scan(
 )
 @click.option(
     "--workers",
-    default=settings.hash_workers,
-    show_default=True,
+    default=None,
     type=int,
     callback=_positive_int_option,
     help="Number of parallel hash worker processes to use.",
 )
 @click.option(
     "--hash-chunk-size",
-    default=settings.hash_chunk_size,
-    show_default=True,
+    default=None,
     type=int,
     callback=_positive_int_option,
     help="Read buffer size in bytes for hashing file contents.",
@@ -356,9 +354,9 @@ def agent(
 
     client = SnapFS(gateway_url=gateway_url, token=token)
     _auto_auth_scanner_client(client, token)
-    settings.hash_algo = algo
-    settings.hash_workers = workers
-    settings.hash_chunk_size = hash_chunk_size
+    settings.hash_algo = algo or settings.hash_algo
+    settings.hash_workers = workers or settings.hash_workers
+    settings.hash_chunk_size = hash_chunk_size or settings.hash_chunk_size
 
     asyncio.run(
         agent_mod.run_agent(
