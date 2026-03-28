@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from snapfs import scanner
+from snapfs import hashing, scanner
 
 
 class DummyAuthError(Exception):
@@ -123,3 +123,27 @@ def test_event_from_stat_builds_expected_payload(monkeypatch):
     assert data["algo"] == "sha1"
     assert data["hash"] == "abc123"
     assert data["seen_at"] == 1712345678.25
+
+
+def test_hashing_registry_supports_sha_algorithms(tmp_path):
+    """Hashing registry should resolve and execute the built-in SHA algorithms."""
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"snapfs test data\n")
+
+    assert hashing.resolve_algorithm("sha1") == "sha1"
+    assert hashing.resolve_algorithm("sha256") == "sha256"
+    assert hashing.hash_file(str(path), "sha1") == scanner.sha1_file(str(path))
+    assert (
+        hashing.hash_file(str(path), "sha256")
+        == "f65be7b59cb7a10e38909f15d40008cda13a0da7fa2c087ffc8289245ba43399"
+    )
+
+
+def test_hashing_registry_reports_optional_algorithm_helpfully():
+    """Unavailable optional algorithms should raise a useful error message."""
+    if hashing.is_available("xxh64"):
+        assert hashing.resolve_algorithm("xxh64") == "xxh64"
+        return
+
+    with pytest.raises(ValueError, match="xxhash"):
+        hashing.resolve_algorithm("xxh64")

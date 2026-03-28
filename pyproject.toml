@@ -40,6 +40,9 @@ snapfs = "snapfs.cli:entrypoint"
 dev = [
   "pytest>=8.0",
 ]
+xxhash = [
+  "xxhash>=3.5.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "lib"}

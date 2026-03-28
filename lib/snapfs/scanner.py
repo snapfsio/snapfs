@@ -16,7 +16,6 @@
 
 import asyncio
 import getpass
-import hashlib
 import os
 import socket
 import sys
@@ -26,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .client import SnapFS
 from .config import settings
+from . import hashing
 
 try:
     import pwd
@@ -39,18 +39,13 @@ except ImportError:
 
 
 def sha1_file(path: str) -> str:
-    """Stream a file and return its SHA-1 hex digest."""
-    h = hashlib.sha1()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    """Backward-compatible SHA-1 helper used by tests and existing callers."""
+    return hashing.hash_file(path, "sha1")
 
 
 async def sha1_file_async(path: str) -> str:
-    """Async wrapper for sha1_file."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, sha1_file, path)
+    """Backward-compatible async SHA-1 helper used by tests and existing callers."""
+    return await hashing.hash_file_async(path, "sha1")
 
 
 def _normalize_trigger_type(value: Optional[str]) -> str:
@@ -207,6 +202,7 @@ async def scan_dir(
     trigger_type: str = "manual",
     schedule_id: Optional[str] = None,
     scan_id: Optional[str] = None,
+    algo: Optional[str] = None,
 ) -> Dict[str, int]:
     """
     Scan a directory tree and publish file.upsert events via the given gateway.
@@ -226,6 +222,7 @@ async def scan_dir(
     :param trigger_type: Scan trigger source (manual/schedule/api).
     :param schedule_id: Optional schedule id when trigger_type is schedule.
     :param scan_id: Optional externally assigned scan id.
+    :param algo: Hash algorithm override (defaults to SNAPFS_HASH_ALGO or sha1).
     :return: Summary dict.
     """
     root = os.path.abspath(root)
@@ -239,6 +236,7 @@ async def scan_dir(
     pid = os.getpid()
     started_at = float(time.time())
     trigger_type = _normalize_trigger_type(trigger_type)
+    selected_algo = hashing.resolve_algorithm(algo or settings.hash_algo)
 
     files: List[str] = []
     walk_errors = 0
@@ -510,7 +508,12 @@ async def scan_dir(
                 cached_algo = res.get("algo")
                 cached_hash = res.get("hash")
 
-                if status == "HIT" and cached_hash and cached_algo and not force:
+                if (
+                    status == "HIT"
+                    and cached_hash
+                    and cached_algo == selected_algo
+                    and not force
+                ):
                     cache_hits += 1
                     if verbose > 1:
                         print(f"cache: {path} {cached_algo}:{cached_hash}")
@@ -518,8 +521,8 @@ async def scan_dir(
                     h = cached_hash
                 else:
                     try:
-                        algo = "sha1"
-                        h = await sha1_file_async(path)
+                        algo = selected_algo
+                        h = await hashing.hash_file_async(path, algo)
                         hashed += 1
                         if verbose > 0:
                             print(f"hash:  {path} {algo}:{h}")
