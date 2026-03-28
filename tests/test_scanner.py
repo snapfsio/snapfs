@@ -263,8 +263,8 @@ def test_scan_dir_supports_multi_worker_hashing(tmp_path, monkeypatch):
     assert all(event["data"]["hash"] for event in file_events)
 
 
-def test_scan_dir_hardlinks_only_count_disk_usage_once(tmp_path, monkeypatch):
-    """Hardlinked files should publish full size once and zero du size for duplicates."""
+def test_scan_dir_dedupes_hardlinked_inode_entries(tmp_path, monkeypatch):
+    """Hardlinked duplicate inode entries should be scanned once and published once."""
     root = tmp_path / "root"
     root.mkdir()
     original = root / "original.bin"
@@ -295,17 +295,17 @@ def test_scan_dir_hardlinks_only_count_disk_usage_once(tmp_path, monkeypatch):
     )
 
     assert summary["files"] == 2
+    assert summary["hashed"] == 1
+    assert summary["published"] == 1
     file_events = [
         event["data"]
         for batch in gateway.published_batches
         for event in batch["events"]
         if event.get("type") == "file.upsert"
     ]
-    assert len(file_events) == 2
-    sizes = sorted(int(event["size"]) for event in file_events)
-    du_sizes = sorted(int(event["fsize_du"]) for event in file_events)
-    assert sizes[0] == sizes[1]
-    assert du_sizes == [0, sizes[0]]
+    assert len(file_events) == 1
+    assert int(file_events[0]["size"]) == len(b"snapfs-hardlink-test")
+    assert int(file_events[0]["fsize_du"]) == len(b"snapfs-hardlink-test")
 
 
 def test_scan_dir_publishes_cancelled_when_task_is_interrupted(tmp_path, monkeypatch):
