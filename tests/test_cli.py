@@ -130,7 +130,14 @@ def test_scan_command_passes_flags_and_prints_summary(monkeypatch, tmp_path):
     calls = []
 
     async def fake_scan_dir(
-        path, client, *, force=False, verbose=0, trigger_type="manual", schedule_id=None
+        path,
+        client,
+        *,
+        force=False,
+        verbose=0,
+        trigger_type="manual",
+        schedule_id=None,
+        algo=None,
     ):
         calls.append(
             {
@@ -140,6 +147,7 @@ def test_scan_command_passes_flags_and_prints_summary(monkeypatch, tmp_path):
                 "verbose": verbose,
                 "trigger_type": trigger_type,
                 "schedule_id": schedule_id,
+                "algo": algo,
             }
         )
         return {
@@ -178,6 +186,7 @@ def test_scan_command_passes_flags_and_prints_summary(monkeypatch, tmp_path):
             "verbose": 1,
             "trigger_type": "manual",
             "schedule_id": None,
+            "algo": "sha1",
         }
     ]
 
@@ -187,7 +196,14 @@ def test_scan_command_wraps_not_a_directory(monkeypatch, tmp_path):
     runner = CliRunner()
 
     async def fake_scan_dir(
-        path, client, *, force=False, verbose=0, trigger_type="manual", schedule_id=None
+        path,
+        client,
+        *,
+        force=False,
+        verbose=0,
+        trigger_type="manual",
+        schedule_id=None,
+        algo=None,
     ):
         raise NotADirectoryError(path)
 
@@ -250,3 +266,68 @@ def test_agent_command_passes_values(monkeypatch):
             "verbose": 2,
         }
     ]
+
+
+def test_scan_command_accepts_algo_override(monkeypatch, tmp_path):
+    """The scan command should forward a selected hash algorithm to the scanner."""
+    runner = CliRunner()
+    calls = []
+
+    async def fake_scan_dir(
+        path,
+        client,
+        *,
+        force=False,
+        verbose=0,
+        trigger_type="manual",
+        schedule_id=None,
+        algo=None,
+    ):
+        calls.append(algo)
+        return {"files": 0, "cache_hits": 0, "hashed": 0, "published": 0, "scan_id": "scan-0"}
+
+    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
+    monkeypatch.setattr(cli_module.scanner, "scan_dir", fake_scan_dir)
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+
+    path = tmp_path / "root"
+    path.mkdir()
+
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "scan",
+            str(path),
+            "--gateway",
+            "https://tenant.snapfs.com",
+            "--algo",
+            "sha256",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == ["sha256"]
+
+
+def test_scan_command_rejects_unknown_algo(monkeypatch, tmp_path):
+    """The CLI should fail fast on an unsupported hash algorithm."""
+    runner = CliRunner()
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+
+    path = tmp_path / "root"
+    path.mkdir()
+
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "scan",
+            str(path),
+            "--gateway",
+            "https://tenant.snapfs.com",
+            "--algo",
+            "bogus",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Unsupported hash algorithm 'bogus'" in result.output

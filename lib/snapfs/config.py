@@ -48,6 +48,9 @@ class Settings(BaseModel):
     # Subject for lifecycle/telemetry events consumed by analytics/indexing agents.
     events_subject: str = os.getenv("SNAPFS_EVENTS_SUBJECT", "snapfs.events")
 
+    # File hashing configuration
+    hash_algo: str = os.getenv("SNAPFS_HASH_ALGO", "sha1").strip().lower()
+
     # Scanner batching knobs
     probe_batch: int = int(os.getenv("SNAPFS_PROBE_BATCH", "200"))
     publish_batch: int = int(os.getenv("SNAPFS_PUBLISH_BATCH", "200"))

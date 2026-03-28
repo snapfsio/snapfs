@@ -22,6 +22,7 @@ from typing import Callable, List, Optional, TypeVar
 from snapfs import SnapFS, __prog__, __version__
 from snapfs import agent as agent_mod
 from snapfs import scanner
+from snapfs import hashing
 from snapfs.config import settings
 
 F = TypeVar("F", bound=Callable[..., object])
@@ -55,6 +56,17 @@ def _auto_auth_scanner_client(client: SnapFS, explicit_token: Optional[str]) -> 
         )
     )
     client.gateway.token = token
+
+
+def _validate_hash_algorithm(
+    ctx: click.Context, param: click.Parameter, value: Optional[str]
+) -> Optional[str]:
+    if value is None:
+        return value
+    try:
+        return hashing.resolve_algorithm(value)
+    except ValueError as e:
+        raise click.BadParameter(str(e), ctx=ctx, param=param) from e
 
 
 def gateway_options(func: F) -> F:
@@ -151,11 +163,22 @@ def query(sql: str, gateway_url: str, token: Optional[str]) -> None:
     is_flag=True,
     help="Force re-hashing files even when cache reports a hit.",
 )
+@click.option(
+    "--algo",
+    default=settings.hash_algo,
+    show_default=True,
+    callback=_validate_hash_algorithm,
+    help=(
+        "Hash algorithm to use "
+        f"({', '.join(hashing.list_algorithms(include_unavailable=True))})."
+    ),
+)
 @verbose_option
 @gateway_options
 def scan(
     path: str,
     force: bool,
+    algo: str,
     verbose: int,
     gateway_url: str,
     token: Optional[str],
@@ -175,7 +198,7 @@ def scan(
 
     try:
         summary = asyncio.run(
-            scanner.scan_dir(path, client, force=force, verbose=verbose)
+            scanner.scan_dir(path, client, force=force, verbose=verbose, algo=algo)
         )
     except NotADirectoryError as e:
         raise click.ClickException(f"Not a directory: {path}") from e
@@ -203,11 +226,22 @@ def scan(
     envvar="SNAPFS_SCAN_ROOT",
     help="Default scan root if the gateway does not specify one (default: SNAPFS_SCAN_ROOT).",
 )
+@click.option(
+    "--algo",
+    default=settings.hash_algo,
+    show_default=True,
+    callback=_validate_hash_algorithm,
+    help=(
+        "Hash algorithm to use for agent scans "
+        f"({', '.join(hashing.list_algorithms(include_unavailable=True))})."
+    ),
+)
 @verbose_option
 @gateway_options
 def agent(
     agent_id: Optional[str],
     scan_root: Optional[str],
+    algo: str,
     verbose: int,
     gateway_url: str,
     token: Optional[str],
@@ -223,6 +257,7 @@ def agent(
 
     client = SnapFS(gateway_url=gateway_url, token=token)
     _auto_auth_scanner_client(client, token)
+    settings.hash_algo = algo
 
     asyncio.run(
         agent_mod.run_agent(
