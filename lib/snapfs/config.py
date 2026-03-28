@@ -17,6 +17,16 @@
 import os
 from typing import Optional
 
+
+def _parse_positive_int(name: str, default: int) -> int:
+    raw = str(os.getenv(name, str(default))).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 from pydantic import BaseModel
 
 
@@ -50,6 +60,8 @@ class Settings(BaseModel):
 
     # File hashing configuration
     hash_algo: str = os.getenv("SNAPFS_HASH_ALGO", "sha1").strip().lower()
+    hash_chunk_size: int = _parse_positive_int("SNAPFS_HASH_CHUNK_SIZE", 1024 * 1024)
+    hash_workers: int = _parse_positive_int("SNAPFS_HASH_WORKERS", 1)
 
     # Scanner batching knobs
     probe_batch: int = int(os.getenv("SNAPFS_PROBE_BATCH", "200"))

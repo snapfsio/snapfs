@@ -138,6 +138,8 @@ def test_scan_command_passes_flags_and_prints_summary(monkeypatch, tmp_path):
         trigger_type="manual",
         schedule_id=None,
         algo=None,
+        hash_workers=None,
+        hash_chunk_size=None,
     ):
         calls.append(
             {
@@ -148,6 +150,8 @@ def test_scan_command_passes_flags_and_prints_summary(monkeypatch, tmp_path):
                 "trigger_type": trigger_type,
                 "schedule_id": schedule_id,
                 "algo": algo,
+                "hash_workers": hash_workers,
+                "hash_chunk_size": hash_chunk_size,
             }
         )
         return {
@@ -187,6 +191,8 @@ def test_scan_command_passes_flags_and_prints_summary(monkeypatch, tmp_path):
             "trigger_type": "manual",
             "schedule_id": None,
             "algo": "sha1",
+            "hash_workers": 1,
+            "hash_chunk_size": 1048576,
         }
     ]
 
@@ -204,6 +210,8 @@ def test_scan_command_wraps_not_a_directory(monkeypatch, tmp_path):
         trigger_type="manual",
         schedule_id=None,
         algo=None,
+        hash_workers=None,
+        hash_chunk_size=None,
     ):
         raise NotADirectoryError(path)
 
@@ -266,6 +274,9 @@ def test_agent_command_passes_values(monkeypatch):
             "verbose": 2,
         }
     ]
+    assert cli_module.settings.hash_algo == "sha1"
+    assert cli_module.settings.hash_workers == 1
+    assert cli_module.settings.hash_chunk_size == 1048576
 
 
 def test_scan_command_accepts_algo_override(monkeypatch, tmp_path):
@@ -282,9 +293,23 @@ def test_scan_command_accepts_algo_override(monkeypatch, tmp_path):
         trigger_type="manual",
         schedule_id=None,
         algo=None,
+        hash_workers=None,
+        hash_chunk_size=None,
     ):
-        calls.append(algo)
-        return {"files": 0, "cache_hits": 0, "hashed": 0, "published": 0, "scan_id": "scan-0"}
+        calls.append(
+            {
+                "algo": algo,
+                "hash_workers": hash_workers,
+                "hash_chunk_size": hash_chunk_size,
+            }
+        )
+        return {
+            "files": 0,
+            "cache_hits": 0,
+            "hashed": 0,
+            "published": 0,
+            "scan_id": "scan-0",
+        }
 
     monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
     monkeypatch.setattr(cli_module.scanner, "scan_dir", fake_scan_dir)
@@ -306,7 +331,7 @@ def test_scan_command_accepts_algo_override(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == ["sha256"]
+    assert calls == [{"algo": "sha256", "hash_workers": 1, "hash_chunk_size": 1048576}]
 
 
 def test_scan_command_rejects_unknown_algo(monkeypatch, tmp_path):
@@ -331,3 +356,94 @@ def test_scan_command_rejects_unknown_algo(monkeypatch, tmp_path):
 
     assert result.exit_code != 0
     assert "Unsupported hash algorithm 'bogus'" in result.output
+
+
+def test_scan_command_accepts_hash_performance_overrides(monkeypatch, tmp_path):
+    """The scan command should forward worker and chunk-size overrides."""
+    runner = CliRunner()
+    calls = []
+
+    async def fake_scan_dir(
+        path,
+        client,
+        *,
+        force=False,
+        verbose=0,
+        trigger_type="manual",
+        schedule_id=None,
+        algo=None,
+        hash_workers=None,
+        hash_chunk_size=None,
+    ):
+        calls.append(
+            {
+                "algo": algo,
+                "hash_workers": hash_workers,
+                "hash_chunk_size": hash_chunk_size,
+            }
+        )
+        return {
+            "files": 0,
+            "cache_hits": 0,
+            "hashed": 0,
+            "published": 0,
+            "scan_id": "scan-0",
+        }
+
+    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
+    monkeypatch.setattr(cli_module.scanner, "scan_dir", fake_scan_dir)
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+
+    path = tmp_path / "root"
+    path.mkdir()
+
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "scan",
+            str(path),
+            "--gateway",
+            "https://tenant.snapfs.com",
+            "--algo",
+            "sha256",
+            "--workers",
+            "3",
+            "--hash-chunk-size",
+            "2097152",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [{"algo": "sha256", "hash_workers": 3, "hash_chunk_size": 2097152}]
+
+
+def test_agent_command_sets_hash_performance_settings(monkeypatch):
+    """The agent command should store hash tuning overrides in settings."""
+    runner = CliRunner()
+
+    async def fake_run_agent(*, client, agent_id=None, scan_root=None, verbose=0):
+        return None
+
+    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
+    monkeypatch.setattr(cli_module.agent_mod, "run_agent", fake_run_agent)
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "agent",
+            "--gateway",
+            "https://tenant.snapfs.com",
+            "--algo",
+            "sha256",
+            "--workers",
+            "4",
+            "--hash-chunk-size",
+            "2097152",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert cli_module.settings.hash_algo == "sha256"
+    assert cli_module.settings.hash_workers == 4
+    assert cli_module.settings.hash_chunk_size == 2097152
