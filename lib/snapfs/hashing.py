@@ -18,7 +18,7 @@ import asyncio
 import hashlib
 from concurrent.futures import Executor
 from functools import partial
-from typing import Callable, Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional
 
 try:
     import xxhash  # type: ignore
@@ -28,6 +28,7 @@ except ImportError:  # optional dependency
 DEFAULT_CHUNK_SIZE = 1024 * 1024
 
 HasherFactory = Callable[[], object]
+ProgressCallback = Callable[[int], Awaitable[None]]
 
 
 def _sha1_factory() -> object:
@@ -133,6 +134,7 @@ async def hash_file_async(
     *,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     executor: Optional[Executor] = None,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> str:
     """Async wrapper for hash_file to run in an executor.
 
@@ -140,8 +142,23 @@ async def hash_file_async(
     :param algorithm: The name of the hash algorithm to use.
     :param chunk_size: The size of chunks to read from the file (default: 1 MiB).
     :param executor: Optional executor used to perform hashing work.
+    :param progress_callback: Optional async callback invoked with bytes read
+        for each chunk when hashing cooperatively in-process.
     :return: The hexadecimal digest of the file hash.
     """
+    if executor is None:
+        hasher = get_hasher(algorithm)
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                if progress_callback is not None:
+                    await progress_callback(len(chunk))
+                await asyncio.sleep(0)
+        return hasher.hexdigest()
+
     loop = asyncio.get_running_loop()
     func = partial(hash_file, path, algorithm, chunk_size=chunk_size)
     return await loop.run_in_executor(executor, func)

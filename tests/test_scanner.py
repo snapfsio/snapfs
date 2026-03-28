@@ -252,3 +252,61 @@ def test_scan_dir_publishes_cancelled_when_task_is_interrupted(tmp_path, monkeyp
     ]
     assert "scan.started" in event_types
     assert "scan.cancelled" in event_types
+
+
+def test_scan_dir_emits_hashing_telemetry_for_long_hashes(tmp_path, monkeypatch):
+    """Long-running hashes should emit telemetry that shows hashing is actively in flight."""
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "large.bin"
+    target.write_bytes(b"x" * 4096)
+
+    gateway = FakeGateway()
+    client = FakeClient(gateway)
+
+    monkeypatch.setattr(scanner.settings, "probe_batch", 10)
+    monkeypatch.setattr(scanner.settings, "publish_batch", 10)
+    monkeypatch.setattr(scanner.settings, "scan_telemetry_interval_sec", 1)
+
+    async def fake_hash_file_async(
+        path, algorithm, *, chunk_size, executor=None, progress_callback=None
+    ):
+        await asyncio.sleep(1.1)
+        if progress_callback is not None:
+            await progress_callback(2048)
+            await asyncio.sleep(0)
+            await progress_callback(2048)
+        return "deadbeef"
+
+    monkeypatch.setattr(hashing, "hash_file_async", fake_hash_file_async)
+
+    summary = asyncio.run(
+        scanner.scan_dir(
+            str(root),
+            client,
+            algo="sha256",
+            hash_workers=1,
+            hash_chunk_size=1024,
+        )
+    )
+
+    assert summary["files"] == 1
+    telemetry_events = [
+        event
+        for batch in gateway.published_batches
+        for event in batch["events"]
+        if event.get("type") == "scan.telemetry"
+    ]
+    assert telemetry_events
+    hashing_telemetry = [
+        event["data"]
+        for event in telemetry_events
+        if event.get("data", {}).get("phase") == "hashing"
+        and event.get("data", {}).get("hash_jobs_active") == 1
+    ]
+    assert hashing_telemetry
+    assert hashing_telemetry[0]["bytes_hashing"] == 4096
+    assert hashing_telemetry[0]["current_path"] == str(target)
+    assert hashing_telemetry[0]["current_size"] == 4096
+    assert hashing_telemetry[0]["bytes_processed"] > 0
+    assert hashing_telemetry[0]["current_offset"] > 0
