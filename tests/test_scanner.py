@@ -17,6 +17,30 @@ class DummyAuthError(Exception):
         self.status = status
 
 
+class FakeGateway:
+    """Minimal gateway double for scanner integration tests."""
+
+    def __init__(self, probe_results=None):
+        self.probe_results = list(probe_results or [])
+        self.published_batches = []
+
+    async def cache_probe_batch_async(self, probes):
+        if self.probe_results:
+            return self.probe_results.pop(0)
+        return [{"status": "MISS"} for _ in probes]
+
+    async def publish_events_async(self, events, subject=None):
+        self.published_batches.append({"events": list(events), "subject": subject})
+        return {"ok": True}
+
+
+class FakeClient:
+    """Minimal client wrapper exposing a fake gateway."""
+
+    def __init__(self, gateway):
+        self.gateway = gateway
+
+
 def test_sha1_file_and_async_match(tmp_path):
     """Test that synchronous and asynchronous SHA-1 hashing produce the same result."""
     path = tmp_path / "sample.txt"
@@ -147,3 +171,42 @@ def test_hashing_registry_reports_optional_algorithm_helpfully():
 
     with pytest.raises(ValueError, match="xxhash"):
         hashing.resolve_algorithm("xxh64")
+
+
+def test_scan_dir_supports_multi_worker_hashing(tmp_path, monkeypatch):
+    """scan_dir should complete successfully when hashing uses multiple worker processes."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha\n")
+    (root / "b.txt").write_text("beta\n")
+
+    gateway = FakeGateway()
+    client = FakeClient(gateway)
+
+    monkeypatch.setattr(scanner.settings, "probe_batch", 10)
+    monkeypatch.setattr(scanner.settings, "publish_batch", 10)
+    monkeypatch.setattr(scanner.settings, "scan_telemetry_interval_sec", 0)
+
+    summary = __import__("asyncio").run(
+        scanner.scan_dir(
+            str(root),
+            client,
+            algo="sha256",
+            hash_workers=2,
+            hash_chunk_size=1024,
+        )
+    )
+
+    assert summary["files"] == 2
+    assert summary["hashed"] == 2
+    assert summary["published"] == 2
+
+    file_events = [
+        event
+        for batch in gateway.published_batches
+        for event in batch["events"]
+        if event.get("type") == "file.upsert"
+    ]
+    assert len(file_events) == 2
+    assert {event["data"]["algo"] for event in file_events} == {"sha256"}
+    assert all(event["data"]["hash"] for event in file_events)

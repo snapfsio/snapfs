@@ -715,4 +715,4 @@ async def scan_dir(
         raise
     finally:
         if hash_executor is not None:
-            hash_executor.shutdown(wait=True, cancel_futures=True)
+            hash_executor.shutdown(wait=True)
