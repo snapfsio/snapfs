@@ -3,6 +3,7 @@ Unit tests for snapfs.scanner.
 """
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -172,6 +173,55 @@ def test_hashing_registry_reports_optional_algorithm_helpfully():
 
     with pytest.raises(ValueError, match="xxhash"):
         hashing.resolve_algorithm("xxh64")
+
+
+def test_scan_dir_pipelines_walk_and_hash_work(tmp_path, monkeypatch):
+    """scan_dir should begin hashing before the full walk has been exhausted."""
+    root = tmp_path / "root"
+    root.mkdir()
+    file_names = [f"file-{idx}.txt" for idx in range(5)]
+    for name in file_names:
+        (root / name).write_text(name)
+
+    gateway = FakeGateway()
+    client = FakeClient(gateway)
+    yielded = {"count": 0}
+    first_hash_started = {"value": False}
+
+    def fake_walk(_root, onerror=None):
+        for name in file_names:
+            yielded["count"] += 1
+            yield str(root), [], [name]
+
+    async def fake_hash_file_async(
+        path, algorithm, *, chunk_size, executor=None, progress_callback=None
+    ):
+        if not first_hash_started["value"]:
+            first_hash_started["value"] = True
+            assert yielded["count"] < len(file_names)
+        await asyncio.sleep(0.01)
+        return f"hashed:{Path(path).name}"
+
+    monkeypatch.setattr(scanner.os, "walk", fake_walk)
+    monkeypatch.setattr(hashing, "hash_file_async", fake_hash_file_async)
+    monkeypatch.setattr(scanner.settings, "probe_batch", 1)
+    monkeypatch.setattr(scanner.settings, "publish_batch", 10)
+    monkeypatch.setattr(scanner.settings, "scan_telemetry_interval_sec", 0)
+
+    summary = asyncio.run(
+        scanner.scan_dir(
+            str(root),
+            client,
+            algo="sha256",
+            hash_workers=1,
+            hash_chunk_size=1024,
+        )
+    )
+
+    assert first_hash_started["value"] is True
+    assert summary["files"] == len(file_names)
+    assert summary["hashed"] == len(file_names)
+    assert summary["published"] == len(file_names)
 
 
 def test_scan_dir_supports_multi_worker_hashing(tmp_path, monkeypatch):

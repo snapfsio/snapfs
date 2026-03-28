@@ -253,7 +253,6 @@ async def scan_dir(
     selected_hash_workers = max(1, int(hash_workers or settings.hash_workers))
     selected_hash_chunk_size = max(1, int(hash_chunk_size or settings.hash_chunk_size))
 
-    files: List[str] = []
     walk_errors = 0
     permission_errors = 0
     total = 0
@@ -272,6 +271,7 @@ async def scan_dir(
     current_path: Optional[str] = root
     current_size = 0
     current_offset = 0
+    producer_finished = False
 
     start_event = {
         "type": "scan.started",
@@ -494,38 +494,69 @@ async def scan_dir(
             file=sys.stderr,
         )
 
+    batch_queue_maxsize = max(2, min(32, selected_hash_workers * 2))
+    batch_queue: asyncio.Queue[Optional[List[str]]] = asyncio.Queue(
+        maxsize=batch_queue_maxsize
+    )
     hash_executor = None
-    try:
-        walk_yield_every = max(1, min(int(settings.probe_batch or 1), 512))
-        for dirpath, _, filenames in os.walk(root, onerror=_on_walk_error):
-            current_path = dirpath
-            current_size = 0
-            await asyncio.sleep(0)
-            for idx, name in enumerate(filenames, start=1):
-                files.append(os.path.join(dirpath, name))
-                files_discovered += 1
-                if idx % walk_yield_every == 0:
-                    await emit_scan_telemetry(status="running")
-                    await asyncio.sleep(0)
-            if telemetry_interval_sec > 0 and files_discovered:
-                await emit_scan_telemetry(status="running")
 
-        current_phase = "hashing"
+    async def produce_path_batches() -> None:
+        nonlocal current_path, current_size, current_offset
+        nonlocal files_discovered, total, producer_finished
+
+        walk_yield_every = max(1, min(int(settings.probe_batch or 1), 512))
+        pending_paths: List[str] = []
+        try:
+            for dirpath, _, filenames in os.walk(root, onerror=_on_walk_error):
+                if current_phase == "walking" and hash_jobs_active == 0:
+                    current_path = dirpath
+                    current_size = 0
+                    current_offset = 0
+                await asyncio.sleep(0)
+                for idx, name in enumerate(filenames, start=1):
+                    pending_paths.append(os.path.join(dirpath, name))
+                    files_discovered += 1
+                    total = files_discovered
+                    if idx % walk_yield_every == 0:
+                        await emit_scan_telemetry(status="running")
+                        await asyncio.sleep(0)
+                    if len(pending_paths) >= settings.probe_batch:
+                        await batch_queue.put(pending_paths)
+                        pending_paths = []
+                if telemetry_interval_sec > 0 and files_discovered:
+                    await emit_scan_telemetry(status="running")
+
+            if pending_paths:
+                await batch_queue.put(pending_paths)
+        finally:
+            producer_finished = True
+            await batch_queue.put(None)
+
+    async def consume_path_batches() -> None:
+        nonlocal cache_hits, hashed, hash_errors, published, bytes_published
+        nonlocal bytes_hashed, bytes_processed, hash_jobs_active, bytes_hashing
+        nonlocal current_phase, current_path, current_size, current_offset
+        nonlocal permission_errors
+
         seen_inodes: set[Tuple[int, int, int, int]] = set()
         du_inodes: set[Tuple[int, int]] = set()
 
-        total = len(files)
+        while True:
+            if hash_jobs_active == 0 and batch_queue.empty() and not producer_finished:
+                current_phase = "walking"
+                current_path = root
+                current_size = files_discovered
+                current_offset = 0
 
-        hash_executor = (
-            ProcessPoolExecutor(max_workers=selected_hash_workers)
-            if selected_hash_workers > 1
-            else None
-        )
+            batch_paths = await batch_queue.get()
+            if batch_paths is None:
+                break
 
-        await emit_scan_telemetry(status="running", force_emit=True)
+            current_phase = "probing"
+            current_path = batch_paths[0] if batch_paths else None
+            current_size = len(batch_paths)
+            current_offset = 0
 
-        for i in range(0, total, settings.probe_batch):
-            batch_paths = files[i : i + settings.probe_batch]
             probes: List[Dict[str, Any]] = []
             stats: Dict[int, os.stat_result] = {}
 
@@ -563,6 +594,7 @@ async def scan_dir(
                     print(f"[scanner] stat error: {p}: {e}", file=sys.stderr)
 
             if not probes:
+                await emit_scan_telemetry(status="running")
                 continue
 
             try:
@@ -599,6 +631,7 @@ async def scan_dir(
                     hash_jobs.append((idx, path))
 
             if hash_jobs:
+                current_phase = "hashing"
                 if hash_executor is None:
                     for idx, path in hash_jobs:
                         size = int(probes[idx]["size"])
@@ -751,7 +784,6 @@ async def scan_dir(
                         du_inodes.add(inode_du_key)
 
                 algo, h = hash_results.get(idx, (None, None))
-
                 events.append(
                     event_from_stat(
                         path,
@@ -780,15 +812,22 @@ async def scan_dir(
                             for ev in events
                         )
                         events.clear()
-                        current_phase = "hashing"
-                        current_path = None
-                        current_size = 0
                     except Exception as e:
                         if _is_auth_error(e):
                             raise RuntimeError(
                                 "Gateway authentication failed while publishing file events"
                             ) from e
                         print(f"[scanner] publish error: {e}", file=sys.stderr)
+                    finally:
+                        current_phase = (
+                            "walking"
+                            if hash_jobs_active == 0
+                            and batch_queue.empty()
+                            and not producer_finished
+                            else "hashing"
+                        )
+                        current_path = None
+                        current_size = 0
 
             if events:
                 try:
@@ -806,22 +845,60 @@ async def scan_dir(
                         for ev in events
                     )
                     events.clear()
-                    current_phase = "hashing"
-                    current_path = None
-                    current_size = 0
                 except Exception as e:
                     if _is_auth_error(e):
                         raise RuntimeError(
                             "Gateway authentication failed while publishing file events"
                         ) from e
                     print(f"[scanner] publish error: {e}", file=sys.stderr)
+                finally:
+                    current_phase = (
+                        "walking"
+                        if hash_jobs_active == 0
+                        and batch_queue.empty()
+                        and not producer_finished
+                        else "hashing"
+                    )
+                    current_path = None
+                    current_size = 0
 
             await flush_scan_errors()
             await emit_scan_telemetry(status="running")
 
+    try:
+        hash_executor = (
+            ProcessPoolExecutor(max_workers=selected_hash_workers)
+            if selected_hash_workers > 1
+            else None
+        )
+        await emit_scan_telemetry(status="running", force_emit=True)
+
+        producer_task = asyncio.create_task(produce_path_batches())
+        consumer_task = asyncio.create_task(consume_path_batches())
+        done, pending = await asyncio.wait(
+            {producer_task, consumer_task},
+            return_when=asyncio.FIRST_EXCEPTION,
+        )
+
+        first_exc = None
+        for task in done:
+            exc = task.exception()
+            if exc is not None:
+                first_exc = exc
+                break
+
+        if first_exc is not None:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            raise first_exc
+
+        await asyncio.gather(*pending)
+
         current_phase = "completed"
         current_path = None
         current_size = 0
+        current_offset = 0
         await flush_scan_errors()
         await emit_scan_telemetry(status="completed", force_emit=True)
         summary = {
