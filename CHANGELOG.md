@@ -15,6 +15,26 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.4.0] - 2026-03-28
+
+### Added
+- Added configurable hash algorithm selection for scans and agents, including optional `xxh64` support when the extra dependency is installed.
+- Added scanner hash performance controls for worker count and hash chunk size via CLI and environment configuration.
+- Added richer large-file scan telemetry, including hashing phase progress and processed-byte reporting.
+- Added a local `scripts/bench_scan.py` benchmark utility plus benchmark guidance in `scripts/README.md`.
+
+### Changed
+- Changed scan execution from a fully serialized walk-then-process flow to a pipelined single-host walk/hash/publish model.
+- Improved scan responsiveness on warm-cache and medium-tree workloads by overlapping walking, probing, hashing, and publishing.
+- Improved running scan telemetry so large-file jobs no longer appear deceptively idle in downstream consumers.
+
+### Fixed
+- Fixed early `Ctrl+C` interrupt handling so cancelled scans publish a reliable terminal `scan.cancelled` event.
+- Fixed runtime resolution of CLI hash defaults so settings-based defaults and explicit CLI overrides behave correctly.
+- Tightened scanner and CLI regression coverage around multi-worker hashing, hardlink de-dupe, telemetry, cancellation, and hash-option precedence.
+
+---
+
 ## [0.3.1] - 2026-03-27
 
 ### Added
