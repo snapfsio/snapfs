@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from .gateway import GatewayClient
 
@@ -41,28 +41,3 @@ class SnapFS:
             subject=subject,
             token=token,
         )
-
-    def sql(
-        self,
-        sql: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Execute raw SQL over the gateway. Intended primarily for internal
-        tools / debugging; higher-level query helpers should be preferred.
-
-        :param sql: The SQL query string to execute.
-        :param params: Optional dictionary of query parameters.
-        :return: List of result rows as dictionaries.
-        """
-        return self.gateway.sql(sql, params=params)
-
-    def files_by_path_like(self, pattern: str) -> List[Dict[str, Any]]:
-        """
-        Example convenience API for querying files by path pattern.
-
-        :param pattern: SQL LIKE pattern for file paths.
-        :return: List of matching file records.
-        """
-        sql = "SELECT * FROM files WHERE path LIKE :pattern"
-        return self.sql(sql, params={"pattern": pattern})

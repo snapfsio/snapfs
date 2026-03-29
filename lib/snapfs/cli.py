@@ -132,7 +132,6 @@ def gateway_options(func: F) -> F:
 
     Note: options are defined on the *command*, so users can write:
       snapfs scan --gateway https://... /path
-      snapfs query --gateway https://... "SELECT ..."
     """
     func = click.option(
         "-t",
@@ -174,30 +173,6 @@ def cli() -> None:
     (not global group options) so you can place them after the command.
     """
     pass
-
-
-@cli.command()
-@click.argument("sql")
-@gateway_options
-def query(sql: str, gateway_url: str, token: Optional[str]) -> None:
-    """
-    Run a raw SQL query via the SnapFS gateway.
-
-    Example:
-      snapfs query "SELECT COUNT(*) AS n FROM files" --gateway https://tenant.snapfs.com
-    """
-    _require_gateway(gateway_url)
-
-    client = SnapFS(gateway_url=gateway_url, token=token)
-    _auto_auth_scanner_client(client, token)
-
-    try:
-        rows = client.sql(sql)
-    except Exception as e:
-        raise click.ClickException(f"Query failed: {e}") from e
-
-    for row in rows:
-        click.echo(json.dumps(row, sort_keys=True))
 
 
 @cli.command()

@@ -52,7 +52,7 @@ class GatewayClient:
     Responsibilities:
       - Base URL / subject
       - Optional Bearer token
-      - POST helpers for cache, ingest, and query endpoints
+      - POST helpers for cache and ingest endpoints
     """
 
     def __init__(
@@ -179,45 +179,3 @@ class GatewayClient:
         if not token:
             raise RuntimeError("Gateway /api/auth/token response missing accessToken")
         return str(token)
-
-    async def sql_async(
-        self,
-        sql: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Execute raw SQL via the SnapFS gateway.
-
-        Assumes a POST /query/sql endpoint that accepts:
-            { "sql": "...", "params": {...} }
-
-        And returns something like:
-            { "rows": [ {..}, {..}, ... ] }
-
-        :param sql: The SQL query string to execute.
-        :param params: Optional dictionary of query parameters.
-        :return: List of result rows as dictionaries.
-        """
-        payload: Dict[str, Any] = {"sql": sql}
-        if params:
-            payload["params"] = params
-
-        result = await self._post_json_async("/query/sql", payload)
-        rows = result.get("rows", result)
-        if isinstance(rows, dict):
-            return [rows]
-        return rows  # type: ignore[return-value]
-
-    def sql(
-        self,
-        sql: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Execute raw SQL via the SnapFS gateway.
-
-        :param sql: The SQL query string to execute.
-        :param params: Optional dictionary of query parameters.
-        :return: List of result rows as dictionaries.
-        """
-        return self._run(self.sql_async(sql, params=params))

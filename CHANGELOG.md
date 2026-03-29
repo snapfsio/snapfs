@@ -15,6 +15,16 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.4.1] - 2026-03-29
+
+### Changed
+- Removed the unsupported raw SQL query surface from the SnapFS client library so command-line usage stays aligned with supported console workflows.
+
+### Fixed
+- Removed lingering gateway helper support for raw SQL query execution now that the public gateway API explicitly blocks arbitrary SQL access.
+
+---
+
 ## [0.4.0] - 2026-03-28
 
 ### Added

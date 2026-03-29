@@ -26,21 +26,15 @@ class FakeGateway:
 
 
 class FakeSnapFS:
-    """Simulated SnapFS client with configurable query results and SQL call tracking."""
+    """Simulated SnapFS client with gateway/auth tracking for CLI tests."""
 
     instances = []
-    query_rows = [{"ok": True}]
 
     def __init__(self, gateway_url=None, token=None):
         self.gateway_url = gateway_url
         self.gateway = FakeGateway()
         self.gateway.token = token
-        self.sql_calls = []
         FakeSnapFS.instances.append(self)
-
-    def sql(self, sql):
-        self.sql_calls.append(sql)
-        return list(self.query_rows)
 
 
 class DummyError(Exception):
@@ -84,43 +78,15 @@ def test_auto_auth_scanner_client_skips_when_explicit_token(monkeypatch):
     assert client.gateway.exchange_calls == []
 
 
-def test_query_command_outputs_rows(monkeypatch):
-    """Test that the 'query' command executes the SQL and outputs the results as JSON."""
+def test_cli_help_does_not_list_query_command():
     runner = CliRunner()
-    FakeSnapFS.instances.clear()
-    FakeSnapFS.query_rows = [{"count": 3}]
-    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
-    monkeypatch.setattr(cli_module.settings, "api_key", None)
 
-    result = runner.invoke(
-        cli_module.cli,
-        ["query", "SELECT 1", "--gateway", "https://tenant.snapfs.com"],
-    )
+    result = runner.invoke(cli_module.cli, ["--help"])
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output.strip()) == {"count": 3}
-    assert FakeSnapFS.instances[0].gateway_url == "https://tenant.snapfs.com"
-    assert FakeSnapFS.instances[0].sql_calls == ["SELECT 1"]
-
-
-def test_query_command_wraps_failures(monkeypatch):
-    """Test that the 'query' command wraps exceptions and prints an error message."""
-    runner = CliRunner()
-
-    class FailingSnapFS(FakeSnapFS):
-        def sql(self, sql):
-            raise DummyError("db unavailable")
-
-    monkeypatch.setattr(cli_module, "SnapFS", FailingSnapFS)
-    monkeypatch.setattr(cli_module.settings, "api_key", None)
-
-    result = runner.invoke(
-        cli_module.cli,
-        ["query", "SELECT 1", "--gateway", "https://tenant.snapfs.com"],
-    )
-
-    assert result.exit_code != 0
-    assert "Query failed: db unavailable" in result.output
+    assert " query " not in result.output
+    assert "scan" in result.output
+    assert "agent" in result.output
 
 
 def test_scan_command_passes_flags_and_prints_summary(monkeypatch, tmp_path):
