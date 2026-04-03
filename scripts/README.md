@@ -1,65 +1,35 @@
 # SnapFS Scripts
 
+This directory contains helper scripts for local SnapFS workflows.
+
+For benchmark methodology, dataset selection, storage notes, and result interpretation, use [`docs/benchmarks.md`](/mnt/homes/rsg/dev/snapfs/docs/benchmarks.md) as the primary reference.
+
 ## `bench_scan.py`
 
-`bench_scan.py` is the recommended way to benchmark normalized SnapFS scan-engine performance locally without requiring a gateway URL, API key, or event publishing.
-
-What it measures:
-- directory walking
-- stat/probe flow
-- hashing
-- local publish/event construction overhead against an in-memory fake gateway
-
-What it does not measure:
-- real gateway network latency
-- API authentication overhead
-- Elasticsearch ingestion/query overhead
-- console rendering latency
-
-### Basic usage
+Benchmark the local scan engine without requiring a real gateway:
 
 ```bash
 python3 scripts/bench_scan.py /path/to/tree --force --workers 2 --algo sha256
-```
-
-Warm-cache style run:
-
-```bash
 python3 scripts/bench_scan.py /path/to/tree --cache-mode hit --workers 2
-```
-
-Structured JSON output:
-
-```bash
 python3 scripts/bench_scan.py /path/to/tree --force --workers 2 --json
 ```
 
-### Benchmark guidance
+## `run_benchmarks.py`
 
-For comparisons, keep these inputs stable:
-- dataset/path
-- hash algorithm
-- worker count
-- hash chunk size
-- cache mode (`hit` vs `miss`)
-- `--force` usage
+Run the benchmark matrix from [`scripts/benchmark_matrix.json`](/mnt/homes/rsg/dev/snapfs/scripts/benchmark_matrix.json):
 
-Recommended practice:
-- warm both tools before comparing them
-- record whether the run is cold or warm
-- compare several runs, not just one
-- capture the JSON output if you want to publish or collate results later
+```bash
+python3 scripts/run_benchmarks.py
+python3 scripts/run_benchmarks.py --list
+python3 scripts/run_benchmarks.py -o tmp/benchmark-results.json
+python3 scripts/run_benchmarks.py --from-json benchmark-results.json
+python3 scripts/run_benchmarks.py --list --dataset large-files
+```
 
-### Captured metadata
+Recommended benchmark environment setup:
 
-The script captures a small amount of system context in JSON output so runs are easier to compare later:
-- timestamp
-- hostname
-- platform
-- Python version
-- SnapFS version
-- logical CPU count
-- CPU model
-- total memory
+```bash
+pip install -e .[benchmarks]
+```
 
-This metadata is intended for context, not for mathematically "normalizing" the score. For filesystem scanners, the most honest approach is to keep the benchmark command stable and compare like-for-like runs.
+The runner writes JSON results and prints an ASCII table in the terminal.

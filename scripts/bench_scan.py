@@ -97,8 +97,9 @@ def collect_system_metadata() -> Dict[str, Any]:
 class FakeGateway:
     """Gateway double that simulates cache probe behavior and discards publishes."""
 
-    def __init__(self, cache_mode: str = "miss"):
+    def __init__(self, cache_mode: str = "miss", cache_algo: str = "sha1"):
         self.cache_mode = cache_mode
+        self.cache_algo = cache_algo
         self.event_counts: Counter[str] = Counter()
         self.published_batches = 0
         self.file_events = 0
@@ -108,7 +109,7 @@ class FakeGateway:
         probes = list(probes)
         if self.cache_mode == "hit":
             return [
-                {"status": "HIT", "algo": settings.hash_algo, "hash": "bench-hit"}
+                {"status": "HIT", "algo": self.cache_algo, "hash": "bench-hit"}
                 for _ in probes
             ]
         return [{"status": "MISS"} for _ in probes]
@@ -203,7 +204,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     if not root.is_dir():
         raise NotADirectoryError(str(root))
 
-    gateway = FakeGateway(cache_mode=args.cache_mode)
+    gateway = FakeGateway(cache_mode=args.cache_mode, cache_algo=args.algo)
     client = FakeClient(gateway)
 
     started = time.perf_counter()

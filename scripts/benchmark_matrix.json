@@ -1,0 +1,29 @@
+{
+  "datasets": [
+    {
+      "name": "large-files",
+      "path": "/data/large-files",
+      "notes": "Large-file dataset for throughput-oriented scans."
+    },
+    {
+      "name": "small-files",
+      "path": "/data/small-files",
+      "notes": "Many-small-file dataset for metadata and per-file overhead."
+    }
+  ],
+  "snapfs": {
+    "enabled": true,
+    "algos": ["sha256", "xxh64"],
+    "workers": [2],
+    "modes": ["force", "cache-hit"],
+    "repeats": 3
+  },
+  "external_tools": {
+    "hashio": {
+      "enabled": true,
+      "algos": ["sha256", "xxh64"],
+      "workers": [2],
+      "repeats": 3
+    }
+  }
+}

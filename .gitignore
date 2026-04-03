@@ -76,3 +76,8 @@ Thumbs.db
 .vscode/
 *.swp
 tmp/
+
+# -----------------
+# Benchmarks
+# -----------------
+benchmark-results.json

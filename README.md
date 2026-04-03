@@ -63,6 +63,14 @@ Install developer dependencies:
 pip install -e .[dev]
 ```
 
+Install benchmark dependencies:
+
+```bash
+pip install -e .[benchmarks]
+```
+
+This installs the in-repo benchmark extras such as `tqdm` and `xxhash`.
+
 Run the test suite:
 
 ```bash
