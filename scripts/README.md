@@ -4,6 +4,15 @@ This directory contains helper scripts for local SnapFS workflows.
 
 For benchmark methodology, dataset selection, storage notes, and result interpretation, use [`docs/benchmarks.md`](/mnt/homes/rsg/dev/snapfs/docs/benchmarks.md) as the primary reference.
 
+## `fs_identity_probe.py`
+
+Use `fs_identity_probe.py` to inspect how a filesystem/editor changes inode, link count, and content identity for the same logical path. This is useful when debugging `create` vs `update` behavior across local disks, NFS, and replace-write editor saves.
+
+```bash
+python3 scripts/fs_identity_probe.py /tmp/snapfs-fs-test
+python3 scripts/fs_identity_probe.py /mnt/nfs/share/snapfs-fs-test --pause-for-manual-edit
+```
+
 ## `bench_scan.py`
 
 Benchmark the local scan engine without requiring a real gateway:
