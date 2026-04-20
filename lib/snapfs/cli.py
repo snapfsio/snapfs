@@ -30,7 +30,7 @@ from snapfs.config import settings
 F = TypeVar("F", bound=Callable[..., object])
 
 
-def _require_gateway(gateway_url: str) -> None:
+def _require_gateway(gateway_url: Optional[str]) -> None:
     if not gateway_url:
         raise click.ClickException("Missing --gateway (or SNAPFS_GATEWAY).")
 
@@ -128,25 +128,32 @@ def gateway_options(func: F) -> F:
 
     Commands using this decorator accept:
       --gateway (or env SNAPFS_GATEWAY)
+      --api-key (or env SNAPFS_API_KEY)
       --token   (or env SNAPFS_TOKEN)
 
     Note: options are defined on the *command*, so users can write:
       snapfs scan --gateway https://... /path
     """
     func = click.option(
+        "--api-key",
+        default=None,
+        envvar="SNAPFS_API_KEY",
+        help="API key used to mint a short-lived scanner token for the SnapFS gateway.",
+    )(func)
+    func = click.option(
         "-t",
         "--token",
         default=None,
         envvar="SNAPFS_TOKEN",
-        help="Optional auth token for the SnapFS gateway.",
+        help="Optional auth token for the SnapFS gateway. Advanced use only.",
     )(func)
     func = click.option(
         "-g",
         "--gateway",
         "gateway_url",
-        default=settings.gateway,
+        default=None,
         envvar="SNAPFS_GATEWAY",
-        help=f"SnapFS gateway base URL (default: {settings.gateway}).",
+        help="SnapFS gateway base URL.",
     )(func)
     return func  # type: ignore[return-value]
 
@@ -169,7 +176,7 @@ def cli() -> None:
     """
     SnapFS command line interface (gateway-based).
 
-    Note: This CLI intentionally keeps gateway/token options on each command
+    Note: This CLI intentionally keeps gateway options on each command
     (not global group options) so you can place them after the command.
     """
     pass
@@ -223,7 +230,8 @@ def scan(
     workers: int,
     hash_chunk_size: int,
     verbose: int,
-    gateway_url: str,
+    gateway_url: Optional[str],
+    api_key: Optional[str],
     token: Optional[str],
 ) -> None:
     """
@@ -236,6 +244,8 @@ def scan(
     """
     _require_gateway(gateway_url)
 
+    if token is None and api_key is not None:
+        settings.api_key = api_key
     client = SnapFS(gateway_url=gateway_url, token=token)
     _auto_auth_scanner_client(client, token)
 
@@ -315,7 +325,8 @@ def agent(
     workers: int,
     hash_chunk_size: int,
     verbose: int,
-    gateway_url: str,
+    gateway_url: Optional[str],
+    api_key: Optional[str],
     token: Optional[str],
 ) -> None:
     """
@@ -327,6 +338,8 @@ def agent(
     """
     _require_gateway(gateway_url)
 
+    if token is None and api_key is not None:
+        settings.api_key = api_key
     client = SnapFS(gateway_url=gateway_url, token=token)
     _auto_auth_scanner_client(client, token)
     settings.hash_algo = algo or settings.hash_algo

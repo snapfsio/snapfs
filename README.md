@@ -38,6 +38,19 @@ To enable optional `xxh64` hashing support:
 pip install -e .[xxhash]
 ```
 
+## Example `.env`
+
+For agent or CLI-based scans, a minimal environment file often looks like:
+
+```dotenv
+SNAPFS_GATEWAY=https://example.snapfs.com
+SNAPFS_API_KEY=YOUR_API_KEY
+SNAPFS_AGENT_ID=scanner-01
+SNAPFS_SCAN_ROOT=/mnt/data
+```
+
+You can export these values in your shell, load them from a local `.env`, or translate them into your service manager configuration.
+
 ## Install The Systemd Agent
 
 For Linux hosts that should run the SnapFS scanner agent as a service:

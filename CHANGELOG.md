@@ -15,6 +15,19 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [0.4.2] - 2026-04-20
+
+### Added
+- Added a first-class `--api-key` CLI option for `scan` and `agent`, backed by `SNAPFS_API_KEY`.
+- Added a small `.env` example to the README to show the common gateway, API key, agent id, and scan root configuration.
+
+### Changed
+- Changed CLI gateway handling so users must provide `--gateway` or `SNAPFS_GATEWAY` explicitly instead of inheriting the localhost development default in command usage.
+- Simplified gateway help text so user-facing CLI help no longer advertises the local development gateway default.
+- Marked `--token` as an advanced auth path while keeping it available for explicit bearer-token workflows.
+
+---
+
 ## [0.4.1] - 2026-03-29
 
 ### Changed
