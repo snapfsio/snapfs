@@ -78,6 +78,100 @@ def test_auto_auth_scanner_client_skips_when_explicit_token(monkeypatch):
     assert client.gateway.exchange_calls == []
 
 
+def test_scan_command_accepts_api_key_option(monkeypatch, tmp_path):
+    """The scan command should accept --api-key and exchange it for a scanner token."""
+    runner = CliRunner()
+    FakeSnapFS.instances.clear()
+    calls = []
+
+    async def fake_scan_dir(
+        path,
+        client,
+        *,
+        force=False,
+        verbose=0,
+        trigger_type="manual",
+        schedule_id=None,
+        algo=None,
+        hash_workers=None,
+        hash_chunk_size=None,
+    ):
+        calls.append({"path": path, "client": client})
+        return {"scan_id": "scan-123"}
+
+    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
+    monkeypatch.setattr(cli_module.scanner, "scan_dir", fake_scan_dir)
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+    monkeypatch.setattr(cli_module.settings, "scanner_token_scopes", "ingest:write")
+
+    path = tmp_path / "root"
+    path.mkdir()
+
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "scan",
+            str(path),
+            "--gateway",
+            "https://tenant.snapfs.com",
+            "--api-key",
+            "sfk_test",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [{"path": str(path.resolve()), "client": FakeSnapFS.instances[0]}]
+    assert FakeSnapFS.instances[0].gateway.token == "jwt-token"
+    assert FakeSnapFS.instances[0].gateway.exchange_calls == [
+        {"api_key": "sfk_test", "scopes": ["ingest:write"]}
+    ]
+
+
+def test_scan_command_prefers_explicit_token_over_api_key(monkeypatch, tmp_path):
+    """The scan command should not exchange the API key when an explicit token is provided."""
+    runner = CliRunner()
+    FakeSnapFS.instances.clear()
+
+    async def fake_scan_dir(
+        path,
+        client,
+        *,
+        force=False,
+        verbose=0,
+        trigger_type="manual",
+        schedule_id=None,
+        algo=None,
+        hash_workers=None,
+        hash_chunk_size=None,
+    ):
+        return {"scan_id": "scan-123"}
+
+    monkeypatch.setattr(cli_module, "SnapFS", FakeSnapFS)
+    monkeypatch.setattr(cli_module.scanner, "scan_dir", fake_scan_dir)
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+
+    path = tmp_path / "root"
+    path.mkdir()
+
+    result = runner.invoke(
+        cli_module.cli,
+        [
+            "scan",
+            str(path),
+            "--gateway",
+            "https://tenant.snapfs.com",
+            "--api-key",
+            "sfk_test",
+            "--token",
+            "explicit-token",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert FakeSnapFS.instances[0].gateway.token == "explicit-token"
+    assert FakeSnapFS.instances[0].gateway.exchange_calls == []
+
+
 def test_cli_help_does_not_list_query_command():
     runner = CliRunner()
 
@@ -87,6 +181,29 @@ def test_cli_help_does_not_list_query_command():
     assert " query " not in result.output
     assert "scan" in result.output
     assert "agent" in result.output
+
+
+def test_scan_help_does_not_expose_localhost_gateway_default():
+    runner = CliRunner()
+
+    result = runner.invoke(cli_module.cli, ["scan", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "localhost:8080" not in result.output
+    assert "SnapFS gateway base URL." in result.output
+
+
+def test_scan_command_requires_gateway(monkeypatch, tmp_path):
+    runner = CliRunner()
+    monkeypatch.setattr(cli_module.settings, "api_key", None)
+
+    path = tmp_path / "root"
+    path.mkdir()
+
+    result = runner.invoke(cli_module.cli, ["scan", str(path)])
+
+    assert result.exit_code != 0
+    assert "Missing --gateway (or SNAPFS_GATEWAY)." in result.output
 
 
 def test_scan_command_passes_flags_and_prints_summary(monkeypatch, tmp_path):

@@ -76,6 +76,7 @@ Thumbs.db
 .vscode/
 *.swp
 tmp/
+.code*
 
 # -----------------
 # Benchmarks
