@@ -146,7 +146,14 @@ def replace_write(path: Path, text: str) -> None:
 
 def ensure_clean_dir(path: Path) -> None:
     if path.exists():
-        shutil.rmtree(path)
+        if not path.is_dir():
+            raise ValueError(f"Target path exists and is not a directory: {path}")
+        if any(path.iterdir()):
+            raise ValueError(
+                f"Refusing to use non-empty target directory: {path}. "
+                "Please provide a new or empty directory."
+            )
+        return
     path.mkdir(parents=True, exist_ok=True)
 
 

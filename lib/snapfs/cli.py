@@ -30,7 +30,7 @@ from snapfs.config import settings
 F = TypeVar("F", bound=Callable[..., object])
 
 
-def _require_gateway(gateway_url: str) -> None:
+def _require_gateway(gateway_url: Optional[str]) -> None:
     if not gateway_url:
         raise click.ClickException("Missing --gateway (or SNAPFS_GATEWAY).")
 
@@ -230,7 +230,7 @@ def scan(
     workers: int,
     hash_chunk_size: int,
     verbose: int,
-    gateway_url: str,
+    gateway_url: Optional[str],
     api_key: Optional[str],
     token: Optional[str],
 ) -> None:
@@ -244,7 +244,7 @@ def scan(
     """
     _require_gateway(gateway_url)
 
-    if api_key is not None:
+    if token is None and api_key is not None:
         settings.api_key = api_key
     client = SnapFS(gateway_url=gateway_url, token=token)
     _auto_auth_scanner_client(client, token)
@@ -325,7 +325,7 @@ def agent(
     workers: int,
     hash_chunk_size: int,
     verbose: int,
-    gateway_url: str,
+    gateway_url: Optional[str],
     api_key: Optional[str],
     token: Optional[str],
 ) -> None:
@@ -338,7 +338,7 @@ def agent(
     """
     _require_gateway(gateway_url)
 
-    if api_key is not None:
+    if token is None and api_key is not None:
         settings.api_key = api_key
     client = SnapFS(gateway_url=gateway_url, token=token)
     _auto_auth_scanner_client(client, token)
