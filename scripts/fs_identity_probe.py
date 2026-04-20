@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Probe how a filesystem/editor changes path, inode, nlink, and content identity.
 
 This script creates a small test fixture under a target directory and records
@@ -14,14 +15,12 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import stat
-import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 
 @dataclass
@@ -50,6 +49,11 @@ FILES = ("A.txt", "B.txt")
 
 
 def sha256_file(path: Path) -> str:
+    """Compute the SHA-256 hash of the file at the given path.
+
+    :param path: Path to the file to hash.
+    :return: Hexadecimal string of the SHA-256 hash of the file content.
+    """
     hasher = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
@@ -58,6 +62,11 @@ def sha256_file(path: Path) -> str:
 
 
 def snapshot_entry(path: Path) -> EntrySnapshot:
+    """Capture a snapshot of the filesystem state for a single path.
+
+    :param path: Path to capture the snapshot for.
+    :return: EntrySnapshot instance containing the captured data for the path.
+    """
     if not path.exists() and not path.is_symlink():
         return EntrySnapshot(
             path=str(path),
@@ -101,6 +110,13 @@ def snapshot_entry(path: Path) -> EntrySnapshot:
 def capture(
     label: str, paths: List[Path], notes: Optional[str] = None
 ) -> SnapshotRecord:
+    """Capture a snapshot record for the given paths with an identifying label and optional notes.
+
+    :param label: Short label to identify this snapshot record.
+    :param paths: List of file paths to capture in this snapshot.
+    :param notes: Optional notes to include in the snapshot record for context.
+    :return: SnapshotRecord instance containing the captured data.
+    """
     return SnapshotRecord(
         label=label,
         captured_at=time.time(),
@@ -110,6 +126,10 @@ def capture(
 
 
 def print_snapshot(record: SnapshotRecord) -> None:
+    """Print a human-readable summary of a SnapshotRecord to the console.
+
+    :param record: SnapshotRecord instance to print.
+    """
     print(f"\n== {record.label} ==")
     if record.notes:
         print(record.notes)
@@ -125,11 +145,21 @@ def print_snapshot(record: SnapshotRecord) -> None:
 
 
 def write_text(path: Path, text: str) -> None:
+    """Write text to the target path using a simple in-place write strategy.
+
+    :param path: Target file path to write.
+    :param text: Text content to write to the file.
+    """
     path.write_text(text, encoding="utf-8")
     os.sync() if hasattr(os, "sync") else None
 
 
 def replace_write(path: Path, text: str) -> None:
+    """Write text to the target path using a replace-write strategy.
+
+    :param path: Target file path to write.
+    :param text: Text content to write to the file.
+    """
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     tmp_path = Path(tmp_name)
     try:
@@ -145,6 +175,10 @@ def replace_write(path: Path, text: str) -> None:
 
 
 def ensure_clean_dir(path: Path) -> None:
+    """Ensure the target path is an empty directory, creating it if needed.
+
+    :param path: Target directory path to prepare.
+    """
     if path.exists():
         if not path.is_dir():
             raise ValueError(f"Target path exists and is not a directory: {path}")
@@ -158,6 +192,13 @@ def ensure_clean_dir(path: Path) -> None:
 
 
 def run_probe(target_dir: Path, *, pause_for_manual_edit: bool) -> List[SnapshotRecord]:
+    """Run the filesystem identity probe, returning a list of captured snapshot records.
+
+    :param target_dir: Directory in which to create the probe fixture.
+    :param pause_for_manual_edit: If True, pause after automated steps to allow a manual
+        edit of A.txt before capturing a final snapshot.
+    :return: List of SnapshotRecord instances capturing the probe results.
+    """
     ensure_clean_dir(target_dir)
     a = target_dir / "A.txt"
     b = target_dir / "B.txt"
@@ -217,6 +258,7 @@ def run_probe(target_dir: Path, *, pause_for_manual_edit: bool) -> List[Snapshot
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Main entry point for the filesystem identity probe script."""
     parser = argparse.ArgumentParser(
         description="Probe filesystem identity behavior for SnapFS lifecycle debugging."
     )
