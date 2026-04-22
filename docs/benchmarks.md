@@ -31,6 +31,13 @@ This extra is intended for local benchmark execution and currently includes:
 - `tqdm` for optional progress bars in the benchmark runner
 - `xxhash` for `xxh64` SnapFS benchmark coverage
 
+If scan throughput matters on a host, prefer installing `xxhash` support before
+benchmarking so you can compare `xxh64` against the SHA-based defaults:
+
+```bash
+pip install snapfs[xxhash]
+```
+
 ## Storage Notes
 
 Benchmark results depend heavily on where the dataset lives.
@@ -55,7 +62,7 @@ These can introduce large first-read penalties, metadata-cache effects, mount-le
 Use the repository this way:
 
 - [`scripts/bench_scan.py`](/mnt/homes/rsg/dev/snapfs/scripts/bench_scan.py) remains the core local SnapFS benchmark entrypoint.
-- [`scripts/benchmark_matrix.json`](/mnt/homes/rsg/dev/snapfs/scripts/benchmark_matrix.json) defines the benchmark cases to expand.
+- [`scripts/example_benchmark_matrix.json`](/mnt/homes/rsg/dev/snapfs/scripts/example_benchmark_matrix.json) is the example matrix to copy and customize per host.
 - [`scripts/run_benchmarks.py`](/mnt/homes/rsg/dev/snapfs/scripts/run_benchmarks.py) lists or executes the benchmark suite locally.
 - [`docs/benchmarks.md`](/mnt/homes/rsg/dev/snapfs/docs/benchmarks.md) defines the benchmark matrix, commands, and result format.
 - Future benchmark helpers or wrappers should live in [`scripts/`](/mnt/homes/rsg/dev/snapfs/scripts).
@@ -113,6 +120,9 @@ For each dataset:
   - `--cache-mode hit`
 - repeats: `3`
 
+If `xxh64` is available, include it in the default matrix. Many hosts will see
+substantially better throughput on CPU-limited or many-small-file workloads.
+
 ## Commands
 
 ### SnapFS
@@ -159,11 +169,34 @@ Small-file runs usually emphasize:
 
 If `xxh64` is only slightly faster than `sha256`, that usually suggests the benchmark is not hash-CPU-bound on that dataset and host.
 
+If `xxh64` is much faster than `sha256` on a small-file or warm-cache run, that
+usually means hashing overhead is a meaningful part of the scan cost on that
+host. In that situation, enabling `xxhash` for production scanner installs is
+usually worth trying.
+
 When benchmarking on NFS or other remote/shared mounts, the first force scan of a dataset may reflect storage warmup more than steady-state scan performance. In that situation, compare like-for-like warmed runs and record the mount type in your notes.
+
+## Sample Result Table
+
+This is a representative example of what a useful comparison table can look
+like. The exact numbers are host- and dataset-dependent, but this shape is what
+you should expect to compare:
+
+| Dataset | Tool | Mode | Algo | Workers | Files | Bytes | Elapsed s | MiB/s | Files/s | Repeat | Notes |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| small-files | snapfs | force | sha1 | 4 | 717 | 0.69 GiB | 0.813 | 872.5 | 881.827 | 2 | warmed run |
+| small-files | snapfs | force | xxh64 | 4 | 717 | 0.69 GiB | 0.319 | 2223.5 | 2249.476 | 1 | warmed run |
+| large-files | snapfs | force | sha1 | 4 | 129 | 27.20 GiB | 258.104 | 107.9 | 0.500 | 2 | storage-limited |
+| large-files | snapfs | force | xxh64 | 4 | 129 | 27.20 GiB | 256.301 | 108.7 | 0.503 | 3 | storage-limited |
+
+In this example, `xxh64` clearly improves the small-file case, while the
+large-file case stays near the same MiB/s because the storage path is the
+bottleneck. That is a common pattern and a good reason to benchmark both
+dataset shapes before choosing defaults.
 
 ## Result Table
 
-Use one shared table for SnapFS runs.
+Use one shared table for your actual SnapFS runs.
 
 | Dataset | Tool | Mode | Algo | Workers | Files | Bytes | Elapsed s | MiB/s | Files/s | Repeat | Notes |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|
@@ -183,7 +216,7 @@ After filling in the raw table, write a short summary under it:
 
 ## Future Script Placement
 
-The current benchmark suite files live in [`scripts/run_benchmarks.py`](/mnt/homes/rsg/dev/snapfs/scripts/run_benchmarks.py) and [`scripts/benchmark_matrix.json`](/mnt/homes/rsg/dev/snapfs/scripts/benchmark_matrix.json).
+The current benchmark suite files live in [`scripts/run_benchmarks.py`](/mnt/homes/rsg/dev/snapfs/scripts/run_benchmarks.py) and [`scripts/example_benchmark_matrix.json`](/mnt/homes/rsg/dev/snapfs/scripts/example_benchmark_matrix.json).
 
 The runner can:
 

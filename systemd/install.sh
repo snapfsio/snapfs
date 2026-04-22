@@ -23,6 +23,8 @@ DEFAULT_API_KEY="${SNAPFS_API_KEY:-}"
 DEFAULT_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES:-ingest:write}"
 DEFAULT_ALLOW_INSECURE="${SNAPFS_ALLOW_INSECURE_GATEWAY:-0}"
 DEFAULT_AGENT_VERBOSE="${SNAPFS_AGENT_VERBOSE:-1}"
+DEFAULT_HASH_ALGO="${SNAPFS_HASH_ALGO:-sha1}"
+DEFAULT_HASH_WORKERS="${SNAPFS_HASH_WORKERS:-1}"
 DEFAULT_SUPPLEMENTARY_GROUPS="${SNAPFS_SUPPLEMENTARY_GROUPS:-}"
 
 TTY_PATH=""
@@ -168,6 +170,16 @@ validate_scanner_name() {
   fi
 }
 
+validate_positive_int() {
+  local label="$1"
+  local value="$2"
+
+  if [[ -z "$value" ]] || [[ ! "$value" =~ ^[0-9]+$ ]] || [[ "$value" -lt 1 ]]; then
+    echo "[ERR] ${label} must be a positive integer" >&2
+    exit 1
+  fi
+}
+
 load_existing_defaults() {
   local env_file="$1"
   if [[ -f "$env_file" ]]; then
@@ -180,6 +192,8 @@ load_existing_defaults() {
     DEFAULT_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES:-$DEFAULT_SCOPES}"
     DEFAULT_ALLOW_INSECURE="${SNAPFS_ALLOW_INSECURE_GATEWAY:-$DEFAULT_ALLOW_INSECURE}"
     DEFAULT_AGENT_VERBOSE="${SNAPFS_AGENT_VERBOSE:-$DEFAULT_AGENT_VERBOSE}"
+    DEFAULT_HASH_ALGO="${SNAPFS_HASH_ALGO:-$DEFAULT_HASH_ALGO}"
+    DEFAULT_HASH_WORKERS="${SNAPFS_HASH_WORKERS:-$DEFAULT_HASH_WORKERS}"
     DEFAULT_SUPPLEMENTARY_GROUPS="${SNAPFS_SUPPLEMENTARY_GROUPS:-$DEFAULT_SUPPLEMENTARY_GROUPS}"
     if [[ -n "${SNAPFS_AGENT_ID:-}" ]]; then
       DEFAULT_SCANNER_NAME="${SNAPFS_AGENT_ID}"
@@ -290,6 +304,13 @@ if [[ "$AS_ROOT" == "0" ]]; then
   SNAPFS_SCANNER_TOKEN_SCOPES_VALUE="$(trim "$(prompt_value 'Scanner token scopes' "$DEFAULT_SCOPES")")"
   SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE="$(trim "$(prompt_value 'Allow insecure HTTP for remote gateways? (0/1)' "$DEFAULT_ALLOW_INSECURE")")"
   SNAPFS_AGENT_VERBOSE_VALUE="$(trim "$(prompt_value 'Agent log verbosity (0-2)' "$DEFAULT_AGENT_VERBOSE")")"
+  SNAPFS_HASH_ALGO_VALUE="$(trim "$(prompt_value 'Hash algorithm' "$DEFAULT_HASH_ALGO")")"
+  if [[ -z "$SNAPFS_HASH_ALGO_VALUE" ]]; then
+    echo "[ERR] Hash algorithm is required" >&2
+    exit 1
+  fi
+  SNAPFS_HASH_WORKERS_VALUE="$(trim "$(prompt_value 'Hash worker count' "$DEFAULT_HASH_WORKERS")")"
+  validate_positive_int "Hash worker count" "$SNAPFS_HASH_WORKERS_VALUE"
   SNAPFS_SUPPLEMENTARY_GROUPS_VALUE="$(normalize_supplementary_groups "$(prompt_value 'Supplementary groups (optional)' "$DEFAULT_SUPPLEMENTARY_GROUPS")")"
 
   if [[ "$SNAPFS_GATEWAY_VALUE" =~ ^http:// ]]; then
@@ -317,6 +338,8 @@ if [[ "$AS_ROOT" == "0" ]]; then
   echo "  state dir  : ${STATE_DIR}"
   echo "  service    : ${SERVICE_UNIT}"
   echo "  verbosity  : ${SNAPFS_AGENT_VERBOSE_VALUE}"
+  echo "  hash algo  : ${SNAPFS_HASH_ALGO_VALUE}"
+  echo "  workers    : ${SNAPFS_HASH_WORKERS_VALUE}"
   echo "  extra groups: ${SNAPFS_SUPPLEMENTARY_GROUPS_VALUE:-—}"
   echo
 
@@ -331,6 +354,8 @@ if [[ "$AS_ROOT" == "0" ]]; then
     SNAPFS_SCANNER_TOKEN_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES_VALUE}" \
     SNAPFS_ALLOW_INSECURE_GATEWAY="${SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE}" \
     SNAPFS_AGENT_VERBOSE="${SNAPFS_AGENT_VERBOSE_VALUE}" \
+    SNAPFS_HASH_ALGO="${SNAPFS_HASH_ALGO_VALUE}" \
+    SNAPFS_HASH_WORKERS="${SNAPFS_HASH_WORKERS_VALUE}" \
     SNAPFS_SUPPLEMENTARY_GROUPS="${SNAPFS_SUPPLEMENTARY_GROUPS_VALUE}" \
     SNAPFS_SCANNER_NAME="${SCANNER_NAME_VALUE}" \
     SNAPFS_USER="${SNAPFS_USER}" \
@@ -366,6 +391,8 @@ SNAPFS_AGENT_ID=${SNAPFS_AGENT_ID}
 SNAPFS_SCAN_ROOT=${SNAPFS_SCAN_ROOT}
 SNAPFS_API_KEY=${SNAPFS_API_KEY}
 SNAPFS_AGENT_VERBOSE=${SNAPFS_AGENT_VERBOSE:-1}
+SNAPFS_HASH_ALGO=${SNAPFS_HASH_ALGO:-sha1}
+SNAPFS_HASH_WORKERS=${SNAPFS_HASH_WORKERS:-1}
 SNAPFS_SUPPLEMENTARY_GROUPS=${SNAPFS_SUPPLEMENTARY_GROUPS:-}
 CFG
 
@@ -469,6 +496,8 @@ echo "    Config file  : ${ENV_FILE}"
 echo "    State dir    : ${STATE_DIR}"
 echo "    SnapFS bin   : ${SNAPFS_BIN}"
 echo "    Verbosity    : ${SNAPFS_AGENT_VERBOSE:-1}"
+echo "    Hash algo    : ${SNAPFS_HASH_ALGO:-sha1}"
+echo "    Workers      : ${SNAPFS_HASH_WORKERS:-1}"
 if [[ -n "${SNAPFS_SUPPLEMENTARY_GROUPS:-}" ]]; then
   echo "    Extra groups : ${SNAPFS_SUPPLEMENTARY_GROUPS}"
 fi

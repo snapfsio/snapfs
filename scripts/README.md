@@ -25,14 +25,44 @@ python3 scripts/bench_scan.py /path/to/tree --force --workers 2 --json
 
 ## `run_benchmarks.py`
 
-Run the benchmark matrix from [`scripts/benchmark_matrix.json`](/mnt/homes/rsg/dev/snapfs/scripts/benchmark_matrix.json):
+`run_benchmarks.py` looks for `./benchmark_matrix.json` in your current working
+directory by default.
+
+This repo includes [`example_benchmark_matrix.json`](example_benchmark_matrix.json)
+as an example matrix. Copy it into the directory where you want to run the
+benchmarks, then update the dataset paths, algorithms, worker counts, and other
+settings for that host before running the script.
+
+Example setup:
+
+```bash
+mkdir -p /tmp/snapfs-bench
+cp scripts/example_benchmark_matrix.json /tmp/snapfs-bench/benchmark_matrix.json
+$EDITOR /tmp/snapfs-bench/benchmark_matrix.json
+cd /tmp/snapfs-bench
+python3 /path/to/snapfs/scripts/run_benchmarks.py
+```
+
+If benchmarking or production scan throughput matters on that host, install
+`xxhash` first so you can include `xxh64` in the matrix:
+
+```bash
+pip install -e .[xxhash]
+```
+
+See [`docs/benchmarks.md`](/mnt/homes/rsg/dev/snapfs/docs/benchmarks.md) for a
+representative sample results table and guidance on how to interpret `xxh64`
+vs SHA-based runs.
+
+You can point at a matrix file explicitly with `--matrix`:
 
 ```bash
 python3 scripts/run_benchmarks.py
 python3 scripts/run_benchmarks.py --list
 python3 scripts/run_benchmarks.py -o tmp/benchmark-results.json
-python3 scripts/run_benchmarks.py --from-json benchmark-results.json
+python3 scripts/run_benchmarks.py --display benchmark-results.json
 python3 scripts/run_benchmarks.py --list --dataset large-files
+python3 scripts/run_benchmarks.py --matrix /path/to/benchmark_matrix.json
 ```
 
 Recommended benchmark environment setup:

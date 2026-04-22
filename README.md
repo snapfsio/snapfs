@@ -35,8 +35,17 @@ pip install -e .
 To enable optional `xxh64` hashing support:
 
 ```bash
+pip install snapfs[xxhash]
+```
+
+or from source:
+
+```bash
 pip install -e .[xxhash]
 ```
+
+If scan performance matters on a host, especially for many-small-file trees or
+warm-cache repeat scans, `xxh64` is worth testing.
 
 ## Example `.env`
 
@@ -58,13 +67,17 @@ For Linux hosts that should run the SnapFS scanner agent as a service:
 ```bash
 git clone https://github.com/snapfsio/snapfs
 cd snapfs
-pip install .
+pip install .[xxhash]
 ./systemd/install.sh
 ```
 
 The installer expects the `snapfs` CLI to already be installed and available in `PATH`. Run the installer as your normal user; it will prompt for elevated privileges when it reaches the root-only systemd setup steps.
 
 For production service installs, prefer installing `snapfs` into a stable system-level Python environment rather than a user-local virtualenv.
+
+If agent throughput matters on that host, prefer installing with `xxhash`
+support and set `SNAPFS_HASH_ALGO=xxh64` during service configuration or when
+re-running the installer.
 
 Current systemd installer support is Linux-only. Windows service support is planned but not available yet.
 
@@ -101,7 +114,7 @@ snapfs scan /mnt/projects
 Select a hash algorithm explicitly:
 
 ```bash
-snapfs scan /mnt/projects --algo sha256
+snapfs scan /mnt/projects --algo xxh64
 ```
 
 Tune local hashing performance:
@@ -121,9 +134,16 @@ Currently supported:
 - `sha256`
 - `xxh64` when installed with the optional `xxhash` extra
 
+How to choose:
+- `sha1`: current default. Use this when you want the standard out-of-the-box SnapFS behavior and do not need to optimize hash throughput yet.
+- `xxh64`: best first option to test when performance matters and `xxhash` is installed. It is often much faster on CPU-limited, warm-cache, or many-small-file workloads.
+- `sha256`: use this when you specifically prefer a SHA-256 hash over the default `sha1`, even if it may cost more CPU time than `xxh64`.
+
 Examples:
 
 ```bash
+snapfs scan /mnt/projects
+snapfs scan /mnt/projects --algo xxh64
 snapfs scan /mnt/projects --algo sha256
 snapfs agent --algo sha256 --gateway https://tenant.snapfs.com
 ```
@@ -162,6 +182,8 @@ python3 scripts/bench_scan.py /mnt/projects --force --workers 2 --algo sha256
 ```
 
 See `scripts/README.md` for benchmarking guidance and `--json` output details.
+For a representative results table and interpretation notes, see
+[`docs/benchmarks.md`](docs/benchmarks.md).
 
 ### Cross-Platform Notes
 

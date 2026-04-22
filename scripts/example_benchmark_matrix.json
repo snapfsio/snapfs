@@ -13,17 +13,9 @@
   ],
   "snapfs": {
     "enabled": true,
-    "algos": ["sha256", "xxh64"],
+    "algos": ["sha1", "xxh64"],
     "workers": [2],
     "modes": ["force", "cache-hit"],
     "repeats": 3
-  },
-  "external_tools": {
-    "hashio": {
-      "enabled": true,
-      "algos": ["sha256", "xxh64"],
-      "workers": [2],
-      "repeats": 3
-    }
   }
 }

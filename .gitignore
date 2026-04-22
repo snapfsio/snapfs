@@ -81,4 +81,5 @@ tmp/
 # -----------------
 # Benchmarks
 # -----------------
+benchmark_matrix.json
 benchmark-results.json

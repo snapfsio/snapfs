@@ -21,8 +21,18 @@ snapfs agent --algo sha256 --gateway https://tenant.snapfs.example
 Optional `xxhash` install:
 
 ```bash
+pip install snapfs[xxhash]
+```
+
+or from source:
+
+```bash
 pip install -e .[xxhash]
 ```
+
+If scan throughput matters on a host, especially for many-small-file trees,
+install `xxhash` and benchmark `xxh64`. It is often materially faster than the
+SHA-based options when hashing cost is the bottleneck.
 
 ## Performance Controls
 

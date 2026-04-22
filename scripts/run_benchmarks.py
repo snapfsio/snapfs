@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from tqdm import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MATRIX = REPO_ROOT / "scripts" / "benchmark_matrix.json"
+DEFAULT_MATRIX = Path.cwd() / "benchmark_matrix.json"
 BENCH_SCAN = REPO_ROOT / "scripts" / "bench_scan.py"
 DEFAULT_OUTPUT = "benchmark-results.json"
 
