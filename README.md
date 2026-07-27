@@ -62,26 +62,30 @@ You can export these values in your shell, load them from a local `.env`, or tra
 
 ## Install The Systemd Agent
 
-For Linux hosts that should run the SnapFS scanner agent as a service, install
-the CLI and run:
+For Linux hosts that should run the SnapFS scanner agent as a service, the
+preferred bootstrap flow is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | bash
+```
+
+This bootstrap installer verifies `python3`, creates a managed virtual
+environment under `/opt/snapfs`, installs `snapfs[xxhash]`, and then hands off
+to the systemd installer for scanner-specific configuration.
+
+If you prefer to review the script locally first, the repo-based fallback
+remains available:
 
 ```bash
 git clone https://github.com/snapfsio/snapfs
 cd snapfs
-pip install .[xxhash]
-./systemd/install.sh
+./install.sh
 ```
 
-The installer expects the `snapfs` CLI to already be installed and available in
-`PATH`. For production service installs, prefer installing `snapfs` into a
-stable system-level Python environment rather than a user-local virtualenv.
-
-If agent throughput matters on that host, prefer installing with `xxhash`
-support and set `SNAPFS_HASH_ALGO=xxh64` during service configuration or when
-re-running the installer.
-
-For ongoing service management, including enabling, disabling, uninstalling, and
-legacy standalone service cleanup, see [`docs/systemd.md`](docs/systemd.md).
+For broader installation guidance, including the bootstrap installer and
+filesystem layout, see [`docs/install.md`](docs/install.md). For ongoing service
+management, including enabling, disabling, uninstalling, and legacy standalone
+service cleanup, see [`docs/systemd.md`](docs/systemd.md).
 
 ## Development
 
@@ -201,6 +205,7 @@ A few practical notes:
 Additional docs live under [`docs/`](docs/):
 
 - [`docs/README.md`](docs/README.md)
+- [`docs/install.md`](docs/install.md)
 - [`docs/systemd.md`](docs/systemd.md)
 - [`docs/scanner.md`](docs/scanner.md)
 
