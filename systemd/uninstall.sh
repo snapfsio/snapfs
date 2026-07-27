@@ -12,18 +12,26 @@ TEMPLATE_PATH="${SYSTEMD_DIR}/${SERVICE_TEMPLATE_UNIT}"
 SNAPFS_CONFIG_DIR="${SNAPFS_CONFIG_DIR:-/etc/snapfs}"
 BASE_STATE_DIR="${SNAPFS_STATE_DIR:-/var/lib/snapfs}"
 DEFAULT_SCANNER_NAME="${SNAPFS_SCANNER_NAME:-${SNAPFS_AGENT_ID:-scanner-01}}"
+TTY_PATH=""
+if [[ -t 0 && -r /dev/tty && -w /dev/tty ]]; then
+  TTY_PATH="/dev/tty"
+fi
+
+is_interactive() {
+  [[ -n "${TTY_PATH}" ]]
+}
 
 confirm_yes() {
   local prompt="$1"
   local default="${2:-N}"
   local reply=""
 
-  if [[ -r /dev/tty && -w /dev/tty ]]; then
+  if is_interactive; then
     if [[ "$default" == "Y" ]]; then
-      IFS= read -r -p "$prompt [Y/n]: " reply < /dev/tty
+      IFS= read -r -p "$prompt [Y/n]: " reply < "${TTY_PATH}"
       reply="${reply:-Y}"
     else
-      IFS= read -r -p "$prompt [y/N]: " reply < /dev/tty
+      IFS= read -r -p "$prompt [y/N]: " reply < "${TTY_PATH}"
       reply="${reply:-N}"
     fi
   else
@@ -56,14 +64,68 @@ instance_service_unit() {
   printf 'snapfs-agent@%s.service' "$scanner_name"
 }
 
-if [[ "$AS_ROOT" == "0" ]]; then
-  SCANNER_NAME="${SNAPFS_SCANNER_NAME:-$DEFAULT_SCANNER_NAME}"
-  if [[ -r /dev/tty && -w /dev/tty ]]; then
-    IFS= read -r -p "Scanner name [${SCANNER_NAME}]: " reply < /dev/tty
-    if [[ -n "${reply}" ]]; then
-      SCANNER_NAME="${reply}"
-    fi
+list_installed_scanners() {
+  local env_file
+  local scanner_name
+
+  if [[ ! -d "$SNAPFS_CONFIG_DIR" ]]; then
+    return 0
   fi
+
+  for env_file in "$SNAPFS_CONFIG_DIR"/agent-*.env; do
+    if [[ ! -e "$env_file" ]]; then
+      continue
+    fi
+    scanner_name="${env_file##*/agent-}"
+    scanner_name="${scanner_name%.env}"
+    if [[ -n "$scanner_name" ]]; then
+      printf '%s\n' "$scanner_name"
+    fi
+  done | sort
+}
+
+select_scanner_name() {
+  local default_name="$1"
+  local scanners=()
+  local scanner=""
+  local reply=""
+  local index=1
+
+  if ! is_interactive; then
+    printf '%s' "$default_name"
+    return 0
+  fi
+
+  while IFS= read -r scanner; do
+    scanners+=("$scanner")
+  done < <(list_installed_scanners)
+
+  if [[ "${#scanners[@]}" -gt 0 ]]; then
+    echo "Installed scanner instances:" > "${TTY_PATH}"
+    for scanner in "${scanners[@]}"; do
+      printf '  %d. %s\n' "$index" "$scanner" > "${TTY_PATH}"
+      index=$((index + 1))
+    done
+    echo > "${TTY_PATH}"
+    echo "Choose a number or type a scanner name." > "${TTY_PATH}"
+  else
+    echo "No installed scanner instances were discovered in ${SNAPFS_CONFIG_DIR}." > "${TTY_PATH}"
+    echo "Type a scanner name to uninstall anyway." > "${TTY_PATH}"
+  fi
+
+  IFS= read -r -p "Scanner name [${default_name}]: " reply < "${TTY_PATH}"
+  reply="${reply:-$default_name}"
+
+  if [[ "$reply" =~ ^[0-9]+$ ]] && [[ "$reply" -ge 1 ]] && [[ "$reply" -le "${#scanners[@]}" ]]; then
+    printf '%s' "${scanners[$((reply - 1))]}"
+    return 0
+  fi
+
+  printf '%s' "$reply"
+}
+
+if [[ "$AS_ROOT" == "0" ]]; then
+  SCANNER_NAME="${SNAPFS_SCANNER_NAME:-$(select_scanner_name "$DEFAULT_SCANNER_NAME")}"
   validate_scanner_name "$SCANNER_NAME"
 
   SNAPFS_ENV_FILE="$(instance_env_file "$SCANNER_NAME")"
