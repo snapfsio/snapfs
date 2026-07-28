@@ -121,29 +121,3 @@ The uninstaller removes:
 By default it leaves the instance state directory in place unless you opt in to
 removing it.
 
-## Legacy Standalone Installs
-
-Older installs may still use the legacy standalone service
-`snapfs-agent.service` with `/etc/snapfs/agent.env` instead of the newer
-instance template.
-
-Legacy standalone paths:
-
-- unit file: `/etc/systemd/system/snapfs-agent.service`
-- enabled symlink: `/etc/systemd/system/multi-user.target.wants/snapfs-agent.service`
-- config file: `/etc/snapfs/agent.env`
-
-To disable that legacy service without uninstalling it:
-
-```bash
-sudo systemctl disable --now snapfs-agent.service
-```
-
-To remove the legacy standalone install entirely:
-
-```bash
-sudo systemctl disable --now snapfs-agent.service
-sudo rm -f /etc/systemd/system/snapfs-agent.service
-sudo rm -f /etc/snapfs/agent.env
-sudo systemctl daemon-reload
-```

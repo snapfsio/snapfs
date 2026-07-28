@@ -15,7 +15,7 @@ Examples:
 
 ```bash
 snapfs scan /mnt/projects --algo sha256
-snapfs agent --algo sha256 --gateway https://tenant.snapfs.example
+snapfs agent --algo sha256 --gateway https://example.snapfs.example
 ```
 
 Optional `xxhash` install:

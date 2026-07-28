@@ -17,10 +17,6 @@ pip install snapfs
 ```
 
 ```bash
-pip install -e .
-```
-
-```bash
 pip install snapfs[xxhash]
 ```
 
@@ -54,28 +50,6 @@ cd snapfs
 ./install.sh
 ```
 
-The manual fallback remains available when you want to manage the Python
-environment yourself:
-
-```bash
-pip install .[xxhash]
-./systemd/install.sh
-```
-
-## Bootstrap Goals
-
-The Linux bootstrap installer is designed to:
-
-- verify a supported Python runtime is available
-- resolve a release version or accept `SNAPFS_VERSION` explicitly
-- fetch a SnapFS source archive when not already running from a repo checkout
-- create a stable managed virtual environment
-- install the `snapfs` CLI into that managed environment
-- invoke the systemd service installer with the resolved `snapfs` binary
-
-The intent is to make the host bootstrap experience simpler while keeping the
-systemd-specific logic focused and reusable.
-
 ## Linux Bootstrap Flow
 
 The entrypoint is the root-level `install.sh` in the repository root.
@@ -99,10 +73,9 @@ Responsibility split:
 This keeps the top-level installer responsible for environment setup and keeps
 the systemd installer responsible for service configuration.
 
-## Recommended Filesystem Layout
+## Filesystem Layout
 
-The intended Linux layout is split by responsibility rather than placing
-everything under a single directory.
+The install Linux layout is split by responsibility:
 
 - `/etc/snapfs`
   - configuration only
@@ -113,52 +86,6 @@ everything under a single directory.
 - `/opt/snapfs`
   - managed application runtime
   - virtual environment and installed package payload
-
-This layout aligns with normal Linux expectations:
-
-- `/etc` for configuration
-- `/var/lib` for service state
-- `/opt` for self-contained application installs
-
-The installer should avoid introducing extra metadata files unless they become
-necessary. Prefer deriving current state from:
-
-- the managed runtime location
-- the installed systemd unit files
-- the agent env files under `/etc/snapfs`
-- `snapfs --version`
-
-## Current Bootstrap Scope
-
-The current bootstrap installer stays conservative and portable:
-
-- require an existing `python3` on the host
-- require `python3 >= 3.8`
-- fail early with a clear message if Python is missing or too old
-- fetch the latest GitHub release by default, with a pinned fallback if lookup fails
-- create a managed environment under `/opt/snapfs/venv`
-- install from the fetched archive or local repo checkout
-- include `xxhash` by default
-- pass the resolved binary path into `systemd/install.sh`
-
-During the handoff, the systemd installer uses the managed `snapfs` binary from
-`/opt/snapfs/venv/bin/snapfs` and offers an interactive numbered menu for hash
-algorithm selection based on the algorithms available in that runtime.
-
-This improves the operator experience without trying to solve distro-specific
-package installation on day one.
-
-## Future Enhancements
-
-Possible later improvements:
-
-- install from published releases instead of only a local checkout
-- support wheel or source tarball installs for offline environments
-- provide a Windows bootstrap path such as `install.ps1`
-- optionally auto-install missing Python packages on supported Linux distros
-
-Windows support should be treated as a later phase. Today Linux and `systemd`
-remain the primary service-install target.
 
 ## Related Docs
 
