@@ -61,11 +61,11 @@ These can introduce large first-read penalties, metadata-cache effects, mount-le
 
 Use the repository this way:
 
-- [`scripts/bench_scan.py`](/mnt/homes/rsg/dev/snapfs/scripts/bench_scan.py) remains the core local SnapFS benchmark entrypoint.
-- [`scripts/example_benchmark_matrix.json`](/mnt/homes/rsg/dev/snapfs/scripts/example_benchmark_matrix.json) is the example matrix to copy and customize per host.
-- [`scripts/run_benchmarks.py`](/mnt/homes/rsg/dev/snapfs/scripts/run_benchmarks.py) lists or executes the benchmark suite locally.
-- [`docs/benchmarks.md`](/mnt/homes/rsg/dev/snapfs/docs/benchmarks.md) defines the benchmark matrix, commands, and result format.
-- Future benchmark helpers or wrappers should live in [`scripts/`](/mnt/homes/rsg/dev/snapfs/scripts).
+- [`scripts/bench_scan.py`](../scripts/bench_scan.py) remains the core local SnapFS benchmark entrypoint.
+- [`scripts/example_benchmark_matrix.json`](../scripts/example_benchmark_matrix.json) is the example matrix to copy and customize per host.
+- [`scripts/run_benchmarks.py`](../scripts/run_benchmarks.py) lists or executes the benchmark suite locally.
+- [`docs/benchmarks.md`](benchmarks.md) defines the benchmark matrix, commands, and result format.
+- Future benchmark helpers or wrappers should live in [`scripts/`](../scripts/).
 
 That keeps the benchmark definition in documentation and the runnable harness in `scripts/`, which is a good fit for this repo.
 
@@ -216,7 +216,7 @@ After filling in the raw table, write a short summary under it:
 
 ## Future Script Placement
 
-The current benchmark suite files live in [`scripts/run_benchmarks.py`](/mnt/homes/rsg/dev/snapfs/scripts/run_benchmarks.py) and [`scripts/example_benchmark_matrix.json`](/mnt/homes/rsg/dev/snapfs/scripts/example_benchmark_matrix.json).
+The current benchmark suite files live in [`scripts/run_benchmarks.py`](../scripts/run_benchmarks.py) and [`scripts/example_benchmark_matrix.json`](../scripts/example_benchmark_matrix.json).
 
 The runner can:
 

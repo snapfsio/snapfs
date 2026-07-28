@@ -2,7 +2,7 @@
 
 This directory contains helper scripts for local SnapFS workflows.
 
-For benchmark methodology, dataset selection, storage notes, and result interpretation, use [`docs/benchmarks.md`](/mnt/homes/rsg/dev/snapfs/docs/benchmarks.md) as the primary reference.
+For benchmark methodology, dataset selection, storage notes, and result interpretation, use [`docs/benchmarks.md`](../docs/benchmarks.md) as the primary reference.
 
 ## `fs_identity_probe.py`
 
@@ -50,7 +50,7 @@ If benchmarking or production scan throughput matters on that host, install
 pip install -e .[xxhash]
 ```
 
-See [`docs/benchmarks.md`](/mnt/homes/rsg/dev/snapfs/docs/benchmarks.md) for a
+See [`docs/benchmarks.md`](../docs/benchmarks.md) for a
 representative sample results table and guidance on how to interpret `xxh64`
 vs SHA-based runs.
 
