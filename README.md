@@ -73,13 +73,31 @@ This bootstrap installer verifies `python3`, creates a managed virtual
 environment under `/opt/snapfs`, installs `snapfs[xxhash]`, and then hands off
 to the systemd installer for scanner-specific configuration.
 
-If you prefer to review the script locally first, the repo-based fallback
-remains available:
+By default it resolves the latest GitHub release and fetches the corresponding
+source archive automatically. You can pin a version explicitly with
+`SNAPFS_VERSION`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | \
+  SNAPFS_VERSION=0.4.2 bash
+```
+
+If the latest-release lookup fails, the bootstrap falls back to a pinned default
+release. If you prefer to review the script locally first, the repo-based
+fallback remains available:
 
 ```bash
 git clone https://github.com/snapfsio/snapfs
 cd snapfs
 ./install.sh
+```
+
+If you prefer to manage the Python environment yourself, the manual fallback
+remains available:
+
+```bash
+pip install .[xxhash]
+./systemd/install.sh
 ```
 
 For broader installation guidance, including the bootstrap installer and

@@ -133,15 +133,21 @@ snapfs_python_for_bin() {
 discover_hash_algorithms() {
   local bin="$1"
   local py_bin=""
+  local output=""
 
   py_bin="$(snapfs_python_for_bin "$bin")"
   if [[ -n "$py_bin" ]] && [[ -x "$py_bin" ]]; then
-    "$py_bin" - <<'PY' 2>/dev/null || true
+    if output="$("$py_bin" - <<'PY' 2>/dev/null
 from snapfs import hashing
 for name in hashing.list_algorithms():
     print(name)
 PY
-    return 0
+    )"; then
+      if [[ -n "$output" ]]; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+    fi
   fi
 
   printf '%s\n' "sha1"

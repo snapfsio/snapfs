@@ -13,8 +13,16 @@ curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh |
 ```
 
 The bootstrap installer verifies `python3`, creates a managed virtual
-environment under `/opt/snapfs`, installs `snapfs[xxhash]`, and then launches
+environment under `/opt/snapfs`, resolves the latest GitHub release, downloads
+the corresponding source archive, installs `snapfs[xxhash]`, and then launches
 the systemd installer for scanner-specific configuration.
+
+To pin a specific release version, set `SNAPFS_VERSION`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | \
+  SNAPFS_VERSION=0.4.2 bash
+```
 
 If you prefer to review the script locally before running it, the repo-based
 fallback remains available:

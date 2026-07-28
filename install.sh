@@ -7,10 +7,14 @@ if [[ "${1:-}" == "--as-root" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SYSTEMD_INSTALLER="${SCRIPT_DIR}/systemd/install.sh"
+REPO_OWNER="${SNAPFS_REPO_OWNER:-snapfsio}"
+REPO_NAME="${SNAPFS_REPO_NAME:-snapfs}"
+DEFAULT_SNAPFS_VERSION="${DEFAULT_SNAPFS_VERSION:-0.4.2}"
+LATEST_RELEASE_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
 INSTALL_ROOT="${SNAPFS_INSTALL_ROOT:-/opt/snapfs}"
 VENV_DIR="${SNAPFS_VENV_DIR:-${INSTALL_ROOT}/venv}"
 INSTALL_EXTRAS="${SNAPFS_INSTALL_EXTRAS:-xxhash}"
+SNAPFS_VERSION="${SNAPFS_VERSION:-}"
 PYTHON_BIN="${SNAPFS_PYTHON:-}"
 VENV_BACKEND="${SNAPFS_VENV_BACKEND:-}"
 VIRTUALENV_CMD="${SNAPFS_VIRTUALENV_CMD:-}"
@@ -18,6 +22,7 @@ SNAPFS_BIN="${VENV_DIR}/bin/snapfs"
 PIP_BIN="${VENV_DIR}/bin/pip"
 VENV_PYTHON_BIN="${VENV_DIR}/bin/python"
 TTY_PATH=""
+BOOTSTRAP_ARCHIVE_DIR="${SNAPFS_BOOTSTRAP_ARCHIVE_DIR:-}"
 
 if [[ -t 0 && -r /dev/tty && -w /dev/tty ]]; then
   TTY_PATH="/dev/tty"
@@ -37,6 +42,10 @@ is_user_managed_path() {
   esac
 
   return 1
+}
+
+repo_has_install_assets() {
+  [[ -f "${SCRIPT_DIR}/pyproject.toml" && -x "${SCRIPT_DIR}/systemd/install.sh" ]]
 }
 
 confirm_yes() {
@@ -78,6 +87,144 @@ discover_python() {
   fi
 
   printf '%s' "${candidate}"
+}
+
+discover_fetch_tool() {
+  if command -v curl >/dev/null 2>&1; then
+    printf '%s' "curl"
+    return 0
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    printf '%s' "wget"
+    return 0
+  fi
+
+  printf '%s' ""
+}
+
+fetch_url() {
+  local url="$1"
+  local dest="${2:-}"
+  local fetch_tool=""
+
+  fetch_tool="$(discover_fetch_tool)"
+  if [[ -z "${fetch_tool}" ]]; then
+    echo "[ERR] Neither curl nor wget is available, but one is required to fetch SnapFS sources." >&2
+    exit 1
+  fi
+
+  case "${fetch_tool}" in
+    curl)
+      if [[ -n "${dest}" ]]; then
+        curl -fsSL "${url}" -o "${dest}"
+      else
+        curl -fsSL "${url}"
+      fi
+      ;;
+    wget)
+      if [[ -n "${dest}" ]]; then
+        wget -qO "${dest}" "${url}"
+      else
+        wget -qO- "${url}"
+      fi
+      ;;
+  esac
+}
+
+resolve_latest_release_version() {
+  local payload=""
+
+  if ! payload="$(fetch_url "${LATEST_RELEASE_API}")"; then
+    return 1
+  fi
+
+  SNAPFS_API_PAYLOAD="${payload}" python3 - <<'PY' 2>/dev/null || true
+import json
+import os
+
+payload = os.environ.get("SNAPFS_API_PAYLOAD", "")
+if not payload:
+    raise SystemExit(1)
+
+data = json.loads(payload)
+tag_name = str(data.get("tag_name", "")).strip()
+if not tag_name:
+    raise SystemExit(1)
+print(tag_name)
+PY
+}
+
+effective_snapfs_version() {
+  local resolved=""
+
+  if [[ -n "${SNAPFS_VERSION}" ]]; then
+    printf '%s' "${SNAPFS_VERSION}"
+    return 0
+  fi
+
+  resolved="$(resolve_latest_release_version || true)"
+  if [[ -n "${resolved}" ]]; then
+    printf '%s' "${resolved}"
+    return 0
+  fi
+
+  printf '%s' "${DEFAULT_SNAPFS_VERSION}"
+}
+
+bootstrap_archive_url() {
+  local version="$1"
+  printf 'https://github.com/%s/%s/archive/refs/tags/%s.tar.gz' "${REPO_OWNER}" "${REPO_NAME}" "${version}"
+}
+
+bootstrap_repo_checkout() {
+  local version=""
+  local archive_url=""
+  local work_dir=""
+  local archive_path=""
+  local extracted_dir=""
+
+  if [[ -n "${BOOTSTRAP_ARCHIVE_DIR}" && -x "${BOOTSTRAP_ARCHIVE_DIR}/install.sh" ]]; then
+    exec env \
+      SNAPFS_BOOTSTRAP_ARCHIVE_DIR="${BOOTSTRAP_ARCHIVE_DIR}" \
+      SNAPFS_INSTALL_ROOT="${INSTALL_ROOT}" \
+      SNAPFS_VENV_DIR="${VENV_DIR}" \
+      SNAPFS_INSTALL_EXTRAS="${INSTALL_EXTRAS}" \
+      SNAPFS_VERSION="${SNAPFS_VERSION}" \
+      SNAPFS_PYTHON="${PYTHON_BIN}" \
+      SNAPFS_VENV_BACKEND="${VENV_BACKEND}" \
+      SNAPFS_VIRTUALENV_CMD="${VIRTUALENV_CMD}" \
+      bash "${BOOTSTRAP_ARCHIVE_DIR}/install.sh" "${@}"
+  fi
+
+  version="$(effective_snapfs_version)"
+  archive_url="$(bootstrap_archive_url "${version}")"
+
+  echo "==> Fetching SnapFS source archive"
+  echo "  version : ${version}"
+  echo "  url     : ${archive_url}"
+
+  work_dir="$(mktemp -d)"
+  archive_path="${work_dir}/snapfs.tar.gz"
+  fetch_url "${archive_url}" "${archive_path}"
+  tar -xzf "${archive_path}" -C "${work_dir}"
+  extracted_dir="$(find "${work_dir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+
+  if [[ -z "${extracted_dir}" || ! -x "${extracted_dir}/install.sh" ]]; then
+    echo "[ERR] Failed to prepare SnapFS installer from ${archive_url}" >&2
+    exit 1
+  fi
+
+  exec env \
+    SNAPFS_BOOTSTRAP_ARCHIVE_DIR="${extracted_dir}" \
+    SNAPFS_INSTALL_ROOT="${INSTALL_ROOT}" \
+    SNAPFS_VENV_DIR="${VENV_DIR}" \
+    SNAPFS_INSTALL_EXTRAS="${INSTALL_EXTRAS}" \
+    SNAPFS_VERSION="${version}" \
+    SNAPFS_PYTHON="${PYTHON_BIN}" \
+    SNAPFS_VENV_BACKEND="${VENV_BACKEND}" \
+    SNAPFS_VIRTUALENV_CMD="${VIRTUALENV_CMD}" \
+    bash "${extracted_dir}/install.sh" "${@}"
 }
 
 python_major_minor() {
@@ -357,14 +504,14 @@ bootstrap_runtime() {
 }
 
 if [[ ! -f "${SCRIPT_DIR}/pyproject.toml" ]]; then
-  echo "[ERR] Missing pyproject.toml in ${SCRIPT_DIR}" >&2
-  exit 1
+  :
 fi
 
-if [[ ! -x "${SYSTEMD_INSTALLER}" ]]; then
-  echo "[ERR] Missing systemd installer: ${SYSTEMD_INSTALLER}" >&2
-  exit 1
+if ! repo_has_install_assets; then
+  bootstrap_repo_checkout "${@}"
 fi
+
+SYSTEMD_INSTALLER="${SCRIPT_DIR}/systemd/install.sh"
 
 PYTHON_BIN="$(discover_python)"
 

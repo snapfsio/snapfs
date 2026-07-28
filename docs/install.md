@@ -31,8 +31,19 @@ curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh |
 ```
 
 The bootstrap script verifies a supported `python3`, creates a managed virtual
-environment under `/opt/snapfs`, installs `snapfs[xxhash]`, and then launches
+environment under `/opt/snapfs`, resolves the latest GitHub release, downloads
+the corresponding source archive, installs `snapfs[xxhash]`, and then launches
 the systemd installer with the resolved `snapfs` binary.
+
+To pin a specific release version, set `SNAPFS_VERSION`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | \
+  SNAPFS_VERSION=0.4.2 bash
+```
+
+If the latest-release lookup fails, the bootstrap falls back to a pinned
+default release.
 
 If you prefer to review the script locally before running it, the repo-based
 fallback remains available:
@@ -56,6 +67,8 @@ pip install .[xxhash]
 The Linux bootstrap installer is designed to:
 
 - verify a supported Python runtime is available
+- resolve a release version or accept `SNAPFS_VERSION` explicitly
+- fetch a SnapFS source archive when not already running from a repo checkout
 - create a stable managed virtual environment
 - install the `snapfs` CLI into that managed environment
 - invoke the systemd service installer with the resolved `snapfs` binary
@@ -71,6 +84,8 @@ Responsibility split:
 
 - `install.sh`
   - bootstrap host prerequisites
+  - resolve the target SnapFS release
+  - fetch and unpack the SnapFS source archive when needed
   - verify `python3` version compatibility
   - create a managed virtual environment
   - install `snapfs` into that environment
@@ -120,8 +135,9 @@ The current bootstrap installer stays conservative and portable:
 - require an existing `python3` on the host
 - require `python3 >= 3.8`
 - fail early with a clear message if Python is missing or too old
+- fetch the latest GitHub release by default, with a pinned fallback if lookup fails
 - create a managed environment under `/opt/snapfs/venv`
-- install from the local repo checkout by default
+- install from the fetched archive or local repo checkout
 - include `xxhash` by default
 - pass the resolved binary path into `systemd/install.sh`
 
