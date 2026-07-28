@@ -5,18 +5,41 @@ scanner agents managed by `systemd` on Linux.
 
 ## Install A Scanner Agent
 
-For Linux hosts that should run the SnapFS scanner agent as a service:
+For Linux hosts that should run the SnapFS scanner agent as a service, the
+preferred flow is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | bash
+```
+
+The bootstrap installer verifies `python3`, creates a managed virtual
+environment under `/opt/snapfs`, resolves the latest GitHub release, downloads
+the corresponding source archive, installs `snapfs[xxhash]`, and then launches
+the systemd installer for scanner-specific configuration.
+
+To pin a specific release version, set `SNAPFS_VERSION`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | \
+  SNAPFS_VERSION=0.4.2 bash
+```
+
+If you prefer to review the script locally before running it, the repo-based
+fallback remains available:
 
 ```bash
 git clone https://github.com/snapfsio/snapfs
 cd snapfs
+./install.sh
+```
+
+If you prefer to manage the Python environment yourself, the manual path is
+still available:
+
+```bash
 pip install .[xxhash]
 ./systemd/install.sh
 ```
-
-The installer expects the `snapfs` CLI to already be installed and available in
-`PATH`. Run the installer as your normal user; it will prompt for elevated
-privileges when it reaches the root-only systemd setup steps.
 
 For production service installs, prefer installing `snapfs` into a stable
 system-level Python environment rather than a user-local virtualenv.
@@ -27,6 +50,11 @@ re-running the installer.
 
 Current systemd installer support is Linux-only. Windows service support is
 planned but not available yet.
+
+When choosing the hash algorithm interactively, the installer presents a
+numbered list of the algorithms supported by the selected `snapfs` runtime. For
+example, `xxh64` is listed when the managed install includes the optional
+`xxhash` dependency.
 
 ## Current Install Style
 

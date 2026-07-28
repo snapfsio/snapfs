@@ -95,6 +95,139 @@ prompt_value() {
   printf '%s' "$reply"
 }
 
+snapfs_python_for_bin() {
+  local bin="$1"
+  local shebang=""
+
+  if [[ ! -f "$bin" ]]; then
+    return 0
+  fi
+
+  IFS= read -r shebang < "$bin" || true
+  case "$shebang" in
+    '#!'*)
+      shebang="${shebang#\#!}"
+      shebang="$(trim "$shebang")"
+      if [[ "$shebang" == "/usr/bin/env python3" ]]; then
+        command -v python3 || true
+        return 0
+      fi
+      if [[ "$shebang" == *" python3" ]]; then
+        printf '%s\n' "${shebang##* }"
+        return 0
+      fi
+      if [[ -x "$shebang" ]]; then
+        printf '%s\n' "$shebang"
+        return 0
+      fi
+      ;;
+  esac
+
+  local sibling_python
+  sibling_python="$(dirname "$bin")/python"
+  if [[ -x "$sibling_python" ]]; then
+    printf '%s\n' "$sibling_python"
+  fi
+}
+
+discover_hash_algorithms() {
+  local bin="$1"
+  local py_bin=""
+  local output=""
+
+  py_bin="$(snapfs_python_for_bin "$bin")"
+  if [[ -n "$py_bin" ]] && [[ -x "$py_bin" ]]; then
+    if output="$("$py_bin" - <<'PY' 2>/dev/null
+from snapfs import hashing
+for name in hashing.list_algorithms():
+    print(name)
+PY
+    )"; then
+      if [[ -n "$output" ]]; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+    fi
+  fi
+
+  printf '%s\n' "sha1"
+  printf '%s\n' "sha256"
+}
+
+hash_algorithm_description() {
+  local algo="$1"
+  case "$algo" in
+    sha1)
+      printf '%s' "default, broad compatibility"
+      ;;
+    sha256)
+      printf '%s' "stronger SHA-256 digest"
+      ;;
+    xxh64)
+      printf '%s' "fastest option when xxhash support is installed"
+      ;;
+    *)
+      printf '%s' ""
+      ;;
+  esac
+}
+
+prompt_hash_algorithm() {
+  local default="$1"
+  local bin="$2"
+  local algos=()
+  local algo=""
+  local reply=""
+  local index=1
+  local default_index=""
+  local description=""
+
+  if ! is_interactive; then
+    printf '%s' "$default"
+    return 0
+  fi
+
+  while IFS= read -r algo; do
+    if [[ -n "$algo" ]]; then
+      algos+=("$algo")
+    fi
+  done < <(discover_hash_algorithms "$bin")
+
+  if [[ "${#algos[@]}" -eq 0 ]]; then
+    printf '%s' "$(prompt_value 'Hash algorithm' "$default")"
+    return 0
+  fi
+
+  echo "Available hash algorithms:" > "${TTY_PATH}"
+  for algo in "${algos[@]}"; do
+    if [[ "$algo" == "$default" ]]; then
+      default_index="$index"
+    fi
+    description="$(hash_algorithm_description "$algo")"
+    if [[ -n "$description" ]]; then
+      printf '  %d. %s - %s\n' "$index" "$algo" "$description" > "${TTY_PATH}"
+    else
+      printf '  %d. %s\n' "$index" "$algo" > "${TTY_PATH}"
+    fi
+    index=$((index + 1))
+  done
+  echo > "${TTY_PATH}"
+
+  if [[ -z "$default_index" ]]; then
+    default_index="$default"
+  fi
+
+  IFS= read -r -p "Hash algorithm [${default_index}]: " reply < "${TTY_PATH}"
+  reply="${reply:-$default_index}"
+
+  if [[ "$reply" =~ ^[0-9]+$ ]] && [[ "$reply" -ge 1 ]] && [[ "$reply" -le "${#algos[@]}" ]]; then
+    printf '%s' "${algos[$((reply - 1))]}"
+    return 0
+  fi
+
+  printf '%s' "$reply"
+}
+
 confirm_yes() {
   local prompt="$1"
   local default="${2:-Y}"
@@ -153,6 +286,11 @@ warn_if_user_managed_path() {
 }
 
 discover_snapfs() {
+  if [[ -n "${SNAPFS_BIN:-}" ]] && [[ -x "${SNAPFS_BIN}" ]]; then
+    printf '%s\n' "${SNAPFS_BIN}"
+    return 0
+  fi
+
   command -v snapfs || true
 }
 
@@ -304,7 +442,7 @@ if [[ "$AS_ROOT" == "0" ]]; then
   SNAPFS_SCANNER_TOKEN_SCOPES_VALUE="$(trim "$(prompt_value 'Scanner token scopes' "$DEFAULT_SCOPES")")"
   SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE="$(trim "$(prompt_value 'Allow insecure HTTP for remote gateways? (0/1)' "$DEFAULT_ALLOW_INSECURE")")"
   SNAPFS_AGENT_VERBOSE_VALUE="$(trim "$(prompt_value 'Agent log verbosity (0-2)' "$DEFAULT_AGENT_VERBOSE")")"
-  SNAPFS_HASH_ALGO_VALUE="$(trim "$(prompt_value 'Hash algorithm' "$DEFAULT_HASH_ALGO")")"
+  SNAPFS_HASH_ALGO_VALUE="$(trim "$(prompt_hash_algorithm "$DEFAULT_HASH_ALGO" "$SNAPFS_BIN_VALUE")")"
   if [[ -z "$SNAPFS_HASH_ALGO_VALUE" ]]; then
     echo "[ERR] Hash algorithm is required" >&2
     exit 1
@@ -342,6 +480,29 @@ if [[ "$AS_ROOT" == "0" ]]; then
   echo "  workers    : ${SNAPFS_HASH_WORKERS_VALUE}"
   echo "  extra groups: ${SNAPFS_SUPPLEMENTARY_GROUPS_VALUE:-—}"
   echo
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    confirm_yes "Proceed with systemd installation?" "Y" || exit 0
+    exec env \
+      SNAPFS_BIN="${SNAPFS_BIN_VALUE}" \
+      SNAPFS_GATEWAY="${SNAPFS_GATEWAY_VALUE}" \
+      SNAPFS_AGENT_ID="${SCANNER_NAME_VALUE}" \
+      SNAPFS_SCAN_ROOT="${SNAPFS_SCAN_ROOT_VALUE}" \
+      SNAPFS_API_KEY="${SNAPFS_API_KEY_VALUE}" \
+      SNAPFS_SCANNER_TOKEN_SCOPES="${SNAPFS_SCANNER_TOKEN_SCOPES_VALUE}" \
+      SNAPFS_ALLOW_INSECURE_GATEWAY="${SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE}" \
+      SNAPFS_AGENT_VERBOSE="${SNAPFS_AGENT_VERBOSE_VALUE}" \
+      SNAPFS_HASH_ALGO="${SNAPFS_HASH_ALGO_VALUE}" \
+      SNAPFS_HASH_WORKERS="${SNAPFS_HASH_WORKERS_VALUE}" \
+      SNAPFS_SUPPLEMENTARY_GROUPS="${SNAPFS_SUPPLEMENTARY_GROUPS_VALUE}" \
+      SNAPFS_SCANNER_NAME="${SCANNER_NAME_VALUE}" \
+      SNAPFS_USER="${SNAPFS_USER}" \
+      SNAPFS_GROUP="${SNAPFS_GROUP}" \
+      SNAPFS_STATE_DIR="${BASE_STATE_DIR}" \
+      SNAPFS_CONFIG_DIR="${CONFIG_DIR}" \
+      SYSTEMD_DIR="${SYSTEMD_DIR}" \
+      bash "$0" --as-root
+  fi
 
   confirm_yes "Proceed with systemd installation using sudo?" "Y" || exit 0
 
