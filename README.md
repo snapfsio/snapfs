@@ -73,13 +73,17 @@ This bootstrap installer verifies `python3`, creates a managed virtual
 environment under `/opt/snapfs`, installs `snapfs[xxhash]`, and then hands off
 to the systemd installer for scanner-specific configuration.
 
+If the host is missing a usable virtual environment backend, the installer now
+offers to install the required system package automatically on supported Linux
+distributions such as Debian, Ubuntu, Rocky, RHEL, Fedora, CentOS, and AlmaLinux.
+
 By default it resolves the latest GitHub release and fetches the corresponding
 source archive automatically. You can pin a version explicitly with
 `SNAPFS_VERSION`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | \
-  SNAPFS_VERSION=0.4.2 bash
+  SNAPFS_VERSION=0.4.3 bash
 ```
 
 If the latest-release lookup fails, the bootstrap falls back to a pinned default
@@ -91,6 +95,20 @@ git clone https://github.com/snapfsio/snapfs
 cd snapfs
 ./install.sh
 ```
+
+If the bootstrap path still fails on a target host, use one of these fallbacks:
+
+```bash
+sudo apt install python3-venv
+```
+
+```bash
+sudo dnf install python3-virtualenv
+```
+
+If your host uses a non-default system Python, install the matching
+`python3.<minor>-venv` package instead. Then re-run `./install.sh`, or install
+the package manually and launch the systemd installer directly.
 
 If you prefer to manage the Python environment yourself, the manual fallback
 remains available:

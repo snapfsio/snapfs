@@ -31,11 +31,15 @@ environment under `/opt/snapfs`, resolves the latest GitHub release, downloads
 the corresponding source archive, installs `snapfs[xxhash]`, and then launches
 the systemd installer with the resolved `snapfs` binary.
 
+If the host is missing a usable virtual environment backend, the installer can
+prompt to install the required system package automatically on supported Linux
+distributions such as Debian, Ubuntu, Rocky, RHEL, Fedora, CentOS, and AlmaLinux.
+
 To pin a specific release version, set `SNAPFS_VERSION`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | \
-  SNAPFS_VERSION=0.4.2 bash
+  SNAPFS_VERSION=0.4.3 bash
 ```
 
 If the latest-release lookup fails, the bootstrap falls back to a pinned
@@ -49,6 +53,23 @@ git clone https://github.com/snapfsio/snapfs
 cd snapfs
 ./install.sh
 ```
+
+If the bootstrap path still fails on a target host, install the distro package
+for the virtual environment backend and re-run the installer:
+
+```bash
+sudo apt install python3-venv
+```
+
+```bash
+sudo dnf install python3-virtualenv
+```
+
+If your host uses a non-default system Python, install the matching
+`python3.<minor>-venv` package instead.
+
+If you prefer not to use the bootstrap flow, you can still install `snapfs`
+into your own Python environment and run the systemd installer directly.
 
 ## Linux Bootstrap Flow
 

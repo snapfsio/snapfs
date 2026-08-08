@@ -6,10 +6,11 @@ if [[ "${1:-}" == "--as-root" ]]; then
   AS_ROOT=1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 REPO_OWNER="${SNAPFS_REPO_OWNER:-snapfsio}"
 REPO_NAME="${SNAPFS_REPO_NAME:-snapfs}"
-DEFAULT_SNAPFS_VERSION="${DEFAULT_SNAPFS_VERSION:-0.4.2}"
+DEFAULT_SNAPFS_VERSION="${DEFAULT_SNAPFS_VERSION:-0.4.3}"
 LATEST_RELEASE_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
 INSTALL_ROOT="${SNAPFS_INSTALL_ROOT:-/opt/snapfs}"
 VENV_DIR="${SNAPFS_VENV_DIR:-${INSTALL_ROOT}/venv}"
@@ -45,7 +46,7 @@ is_user_managed_path() {
 }
 
 repo_has_install_assets() {
-  [[ -f "${SCRIPT_DIR}/pyproject.toml" && -x "${SCRIPT_DIR}/systemd/install.sh" ]]
+  [[ -f "${SCRIPT_DIR}/pyproject.toml" && -f "${SCRIPT_DIR}/systemd/install.sh" ]]
 }
 
 confirm_yes() {
@@ -184,7 +185,7 @@ bootstrap_repo_checkout() {
   local archive_path=""
   local extracted_dir=""
 
-  if [[ -n "${BOOTSTRAP_ARCHIVE_DIR}" && -x "${BOOTSTRAP_ARCHIVE_DIR}/install.sh" ]]; then
+  if [[ -n "${BOOTSTRAP_ARCHIVE_DIR}" && -f "${BOOTSTRAP_ARCHIVE_DIR}/install.sh" ]]; then
     exec env \
       SNAPFS_BOOTSTRAP_ARCHIVE_DIR="${BOOTSTRAP_ARCHIVE_DIR}" \
       SNAPFS_INSTALL_ROOT="${INSTALL_ROOT}" \
@@ -210,7 +211,7 @@ bootstrap_repo_checkout() {
   tar -xzf "${archive_path}" -C "${work_dir}"
   extracted_dir="$(find "${work_dir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
 
-  if [[ -z "${extracted_dir}" || ! -x "${extracted_dir}/install.sh" ]]; then
+  if [[ -z "${extracted_dir}" || ! -f "${extracted_dir}/install.sh" ]]; then
     echo "[ERR] Failed to prepare SnapFS installer from ${archive_url}" >&2
     exit 1
   fi
@@ -369,7 +370,131 @@ print_venv_backend_hint() {
       echo "      On Debian/Ubuntu, try:" >&2
       echo "      sudo apt install python${py_mm}-venv" >&2
       ;;
+    *" rocky "*|*" rhel "*|*" fedora "*|*" centos "*|*" alma "*|*" almalinux "*)
+      echo "      On RHEL/Rocky/Fedora-family systems, try:" >&2
+      if command -v dnf >/dev/null 2>&1; then
+        echo "      sudo dnf install python3-virtualenv" >&2
+      else
+        echo "      sudo yum install python3-virtualenv" >&2
+      fi
+      ;;
   esac
+}
+
+suggest_venv_backend_install() {
+  local bin="$1"
+  local py_mm=""
+  local os_id=""
+  local os_like=""
+  local package_manager=""
+  local package_name=""
+
+  py_mm="$(python_major_minor "${bin}")"
+
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    os_id="${ID:-}"
+    os_like="${ID_LIKE:-}"
+  fi
+
+  case " ${os_id} ${os_like} " in
+    *" ubuntu "*|*" debian "*)
+      package_manager="apt"
+      package_name="python${py_mm}-venv"
+      ;;
+    *" rocky "*|*" rhel "*|*" fedora "*|*" centos "*|*" alma "*|*" almalinux "*)
+      if command -v dnf >/dev/null 2>&1; then
+        package_manager="dnf"
+      elif command -v yum >/dev/null 2>&1; then
+        package_manager="yum"
+      fi
+      package_name="python3-virtualenv"
+      ;;
+  esac
+
+  if [[ -n "${package_manager}" && -n "${package_name}" ]]; then
+    printf '%s|%s' "${package_manager}" "${package_name}"
+  fi
+}
+
+install_venv_backend_package() {
+  local package_manager="$1"
+  local package_name="$2"
+
+  case "${package_manager}" in
+    apt)
+      if [[ "$(id -u)" -eq 0 ]]; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "${package_name}"
+      else
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${package_name}"
+      fi
+      ;;
+    dnf)
+      if [[ "$(id -u)" -eq 0 ]]; then
+        dnf install -y "${package_name}"
+      else
+        sudo dnf install -y "${package_name}"
+      fi
+      ;;
+    yum)
+      if [[ "$(id -u)" -eq 0 ]]; then
+        yum install -y "${package_name}"
+      else
+        sudo yum install -y "${package_name}"
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+maybe_install_venv_backend() {
+  local bin="$1"
+  local suggestion=""
+  local package_manager=""
+  local package_name=""
+  local install_cmd=""
+
+  if ! is_interactive; then
+    return 1
+  fi
+
+  suggestion="$(suggest_venv_backend_install "${bin}")"
+  if [[ -z "${suggestion}" ]]; then
+    return 1
+  fi
+
+  IFS='|' read -r package_manager package_name <<< "${suggestion}"
+  if [[ -z "${package_manager}" || -z "${package_name}" ]]; then
+    return 1
+  fi
+
+  case "${package_manager}" in
+    apt)
+      install_cmd="sudo apt install ${package_name}"
+      ;;
+    dnf)
+      install_cmd="sudo dnf install ${package_name}"
+      ;;
+    yum)
+      install_cmd="sudo yum install ${package_name}"
+      ;;
+  esac
+
+  echo "[WARN] No usable virtual environment backend was found for: ${bin}" >&2
+  echo "       SnapFS can install the required system package for you:" >&2
+  echo "       ${install_cmd}" >&2
+
+  confirm_yes "Proceed with this system package install?" "Y" || return 1
+
+  if ! install_venv_backend_package "${package_manager}" "${package_name}"; then
+    return 1
+  fi
+
+  VENV_BACKEND="$(discover_venv_backend)"
+  [[ -n "${VENV_BACKEND}" ]]
 }
 
 validate_python() {
@@ -397,8 +522,24 @@ PY
     exit 1
   fi
 
+  PYTHON_BIN="${bin}"
   VENV_BACKEND="$(discover_venv_backend)"
   if [[ -z "${VENV_BACKEND}" ]]; then
+    if maybe_install_venv_backend "${bin}"; then
+      echo "Detected virtual environment backend after package install:"
+      case "${VENV_BACKEND}" in
+        venv)
+          echo "  python3 -m venv"
+          ;;
+        python-virtualenv)
+          echo "  python3 -m virtualenv"
+          ;;
+        virtualenv-cmd)
+          echo "  ${VIRTUALENV_CMD}"
+          ;;
+      esac
+      return 0
+    fi
     echo "[ERR] No usable virtual environment backend was found for: ${bin}" >&2
     echo "      Install one of the following and try again:" >&2
     echo "      - python3-venv (or the distro-specific python3.x-venv package)" >&2

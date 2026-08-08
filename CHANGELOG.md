@@ -8,10 +8,22 @@ All notable changes to this project are documented in this file.
 - _No unreleased additions yet_
 
 ### Changed
-- _No unreleased changes yet_
+- Prepared the bootstrap installer and packaging metadata for the `0.4.3` release.
 
 ### Fixed
-- _No unreleased fixes yet_
+- Fixed `curl ... | bash` bootstrap execution for the root-level bootstrap installer release flow.
+- Fixed distro-aware virtual environment backend recovery prompts and documentation for Debian/Ubuntu and RHEL-family systems.
+
+---
+
+## [0.4.3] - 2026-08-08
+
+### Changed
+- Prepared the bootstrap installer and packaging metadata for the `0.4.3` release.
+
+### Fixed
+- Fixed `curl ... | bash` bootstrap execution for the root-level bootstrap installer release flow.
+- Fixed distro-aware virtual environment backend recovery prompts and documentation for Debian/Ubuntu and RHEL-family systems.
 
 ---
 
