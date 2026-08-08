@@ -370,7 +370,7 @@ print_venv_backend_hint() {
       echo "      On Debian/Ubuntu, try:" >&2
       echo "      sudo apt install python${py_mm}-venv" >&2
       ;;
-    *" rocky "*|*" rhel "*|*" fedora "*|*" centos "*|*" alma "*)
+    *" rocky "*|*" rhel "*|*" fedora "*|*" centos "*|*" alma "*|*" almalinux "*)
       echo "      On RHEL/Rocky/Fedora-family systems, try:" >&2
       if command -v dnf >/dev/null 2>&1; then
         echo "      sudo dnf install python3-virtualenv" >&2
@@ -403,7 +403,7 @@ suggest_venv_backend_install() {
       package_manager="apt"
       package_name="python${py_mm}-venv"
       ;;
-    *" rocky "*|*" rhel "*|*" fedora "*|*" centos "*|*" alma "*)
+    *" rocky "*|*" rhel "*|*" fedora "*|*" centos "*|*" alma "*|*" almalinux "*)
       if command -v dnf >/dev/null 2>&1; then
         package_manager="dnf"
       elif command -v yum >/dev/null 2>&1; then
@@ -425,9 +425,9 @@ install_venv_backend_package() {
   case "${package_manager}" in
     apt)
       if [[ "$(id -u)" -eq 0 ]]; then
-        apt install -y "${package_name}"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "${package_name}"
       else
-        sudo apt install -y "${package_name}"
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${package_name}"
       fi
       ;;
     dnf)
@@ -522,6 +522,7 @@ PY
     exit 1
   fi
 
+  PYTHON_BIN="${bin}"
   VENV_BACKEND="$(discover_venv_backend)"
   if [[ -z "${VENV_BACKEND}" ]]; then
     if maybe_install_venv_backend "${bin}"; then

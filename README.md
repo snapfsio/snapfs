@@ -99,16 +99,16 @@ cd snapfs
 If the bootstrap path still fails on a target host, use one of these fallbacks:
 
 ```bash
-sudo apt install python3.x-venv
+sudo apt install python3-venv
 ```
 
 ```bash
 sudo dnf install python3-virtualenv
 ```
 
-Replace `python3.x-venv` with the package matching your system Python version,
-then re-run `./install.sh`, or install the package manually and launch the
-systemd installer directly.
+If your host uses a non-default system Python, install the matching
+`python3.<minor>-venv` package instead. Then re-run `./install.sh`, or install
+the package manually and launch the systemd installer directly.
 
 If you prefer to manage the Python environment yourself, the manual fallback
 remains available:

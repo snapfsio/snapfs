@@ -58,14 +58,15 @@ If the bootstrap path still fails on a target host, install the distro package
 for the virtual environment backend and re-run the installer:
 
 ```bash
-sudo apt install python3.x-venv
+sudo apt install python3-venv
 ```
 
 ```bash
 sudo dnf install python3-virtualenv
 ```
 
-Replace `python3.x-venv` with the package matching your system Python version.
+If your host uses a non-default system Python, install the matching
+`python3.<minor>-venv` package instead.
 
 If you prefer not to use the bootstrap flow, you can still install `snapfs`
 into your own Python environment and run the systemd installer directly.
