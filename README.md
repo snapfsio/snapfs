@@ -83,7 +83,7 @@ source archive automatically. You can pin a version explicitly with
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/snapfsio/snapfs/master/install.sh | \
-  SNAPFS_VERSION=0.4.2 bash
+  SNAPFS_VERSION=0.4.3 bash
 ```
 
 If the latest-release lookup fails, the bootstrap falls back to a pinned default
