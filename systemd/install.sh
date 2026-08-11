@@ -248,6 +248,56 @@ confirm_yes() {
   [[ "$reply" =~ ^[Yy]$ ]]
 }
 
+prompt_yes_no_value() {
+  local prompt="$1"
+  local default="${2:-0}"
+  local reply=""
+  local default_prompt="N"
+
+  default="$(trim "$default")"
+  case "$default" in
+    1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn])
+      default="1"
+      default_prompt="Y"
+      ;;
+    0|[Nn]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee]|[Oo][Ff][Ff]|"")
+      default="0"
+      default_prompt="N"
+      ;;
+    *)
+      echo "[ERR] Invalid yes/no default value: $default" >&2
+      exit 1
+      ;;
+  esac
+
+  if ! is_interactive; then
+    printf '%s' "$default"
+    return 0
+  fi
+
+  if [[ "$default_prompt" == "Y" ]]; then
+    IFS= read -r -p "$prompt [Y/n]: " reply < "${TTY_PATH}"
+    reply="${reply:-Y}"
+  else
+    IFS= read -r -p "$prompt [y/N]: " reply < "${TTY_PATH}"
+    reply="${reply:-N}"
+  fi
+
+  reply="$(trim "$reply")"
+  case "$reply" in
+    [Yy]|[Yy][Ee][Ss])
+      printf '%s' "1"
+      ;;
+    [Nn]|[Nn][Oo])
+      printf '%s' "0"
+      ;;
+    *)
+      echo "[ERR] Please answer y or n" >&2
+      exit 1
+      ;;
+  esac
+}
+
 validate_snapfs_bin() {
   local bin="$1"
 
@@ -440,7 +490,7 @@ if [[ "$AS_ROOT" == "0" ]]; then
   fi
 
   SNAPFS_SCANNER_TOKEN_SCOPES_VALUE="$(trim "$(prompt_value 'Scanner token scopes' "$DEFAULT_SCOPES")")"
-  SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE="$(trim "$(prompt_value 'Allow insecure HTTP for remote gateways? (0/1)' "$DEFAULT_ALLOW_INSECURE")")"
+  SNAPFS_ALLOW_INSECURE_GATEWAY_VALUE="$(trim "$(prompt_yes_no_value 'Allow insecure HTTP for remote gateways?' "$DEFAULT_ALLOW_INSECURE")")"
   SNAPFS_AGENT_VERBOSE_VALUE="$(trim "$(prompt_value 'Agent log verbosity (0-2)' "$DEFAULT_AGENT_VERBOSE")")"
   SNAPFS_HASH_ALGO_VALUE="$(trim "$(prompt_hash_algorithm "$DEFAULT_HASH_ALGO" "$SNAPFS_BIN_VALUE")")"
   if [[ -z "$SNAPFS_HASH_ALGO_VALUE" ]]; then
