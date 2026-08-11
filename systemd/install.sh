@@ -254,9 +254,21 @@ prompt_yes_no_value() {
   local reply=""
   local default_prompt="N"
 
-  if [[ "$default" == "1" ]]; then
-    default_prompt="Y"
-  fi
+  default="$(trim "$default")"
+  case "$default" in
+    1|[Yy]|[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn])
+      default="1"
+      default_prompt="Y"
+      ;;
+    0|[Nn]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee]|[Oo][Ff][Ff]|"")
+      default="0"
+      default_prompt="N"
+      ;;
+    *)
+      echo "[ERR] Invalid yes/no default value: $default" >&2
+      exit 1
+      ;;
+  esac
 
   if ! is_interactive; then
     printf '%s' "$default"
@@ -271,6 +283,7 @@ prompt_yes_no_value() {
     reply="${reply:-N}"
   fi
 
+  reply="$(trim "$reply")"
   case "$reply" in
     [Yy]|[Yy][Ee][Ss])
       printf '%s' "1"
